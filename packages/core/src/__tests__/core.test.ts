@@ -13,6 +13,7 @@ import {
   createRefundRequest,
   dispatchRefund,
   FakeStripeProvider,
+  enqueueOutbox,
   lookupCustomerByEmail,
   SeededPaymentsClient,
   SYSTEM_ACTOR,
@@ -78,6 +79,10 @@ describe('authorization matrix', () => {
                 role === 'support_agent' && action === 'refund:cancel'
                   ? role
                   : 'someone',
+              approvalActorIds:
+                role === 'finance_reviewer' && action === 'audit:read'
+                  ? []
+                  : undefined,
             }),
           ).toBe(expected);
         }
@@ -88,6 +93,16 @@ describe('authorization matrix', () => {
   it('generates a capability entry for every action in the policy union', () => {
     const covered = new Set(capabilityMatrix().map((entry) => entry.action));
     for (const action of actions) expect(covered.has(action)).toBe(true);
+    expect(
+      capabilityMatrix().find(
+        (entry) =>
+          entry.role === 'finance_reviewer' && entry.action === 'audit:read',
+      ),
+    ).toEqual({
+      role: 'finance_reviewer',
+      action: 'audit:read',
+      condition: 'own_decision',
+    });
   });
 });
 
@@ -287,6 +302,27 @@ describe.runIf(Boolean(process.env.DATABASE_URL))(
       ).rejects.toThrow('does not belong');
     });
 
+    it('evaluates payment invariants as the owner when the caller cannot see the counterpart row', async () => {
+      await withActor(support, async (client) => {
+        const visibility = await client.query(
+          `SELECT id FROM payments
+           WHERE set_config('app.current_actor_role', 'restricted', true) IS NOT NULL`,
+        );
+        expect(visibility.rows).toEqual([]);
+        await client.query(
+          `SELECT set_config('app.current_actor_role', 'support_agent', true)`,
+        );
+        const functionSecurity = await client.query(
+          `SELECT p.prosecdef
+           FROM pg_proc p
+           JOIN pg_namespace n ON n.oid = p.pronamespace
+           WHERE n.nspname = 'public'
+             AND p.proname = 'validate_refund_payment'`,
+        );
+        expect(functionSecurity.rows[0].prosecdef).toBe(true);
+      });
+    });
+
     it('finance approval atomically settles state and enqueues execution work', async () => {
       const suffix = crypto.randomUUID();
       const refundId = `approval-action-${suffix}`;
@@ -337,6 +373,24 @@ describe.runIf(Boolean(process.env.DATABASE_URL))(
       );
       await withActor(SYSTEM_ACTOR, (client) =>
         client.query('DELETE FROM refund_requests WHERE id = $1', [refundId]),
+      );
+    });
+
+    it('enqueues through the owner policy without changing the caller actor context', async () => {
+      const dedupeKey = `actor-context-${crypto.randomUUID()}`;
+      await withActor(reviewerOne, async (client) => {
+        await enqueueOutbox(client, 'test.context', dedupeKey, {});
+        const context = await client.query(
+          `SELECT current_setting('app.current_actor_role') AS role,
+                  current_setting('app.current_actor_id') AS actor_id`,
+        );
+        expect(context.rows[0]).toEqual({
+          role: 'finance_reviewer',
+          actor_id: reviewerOne.id,
+        });
+      });
+      await withActor(SYSTEM_ACTOR, (client) =>
+        client.query('DELETE FROM outbox WHERE dedupe_key = $1', [dedupeKey]),
       );
     });
 

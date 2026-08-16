@@ -58,7 +58,11 @@ CREATE TABLE refund_requests (
 );
 
 CREATE OR REPLACE FUNCTION validate_refund_payment()
-RETURNS trigger LANGUAGE plpgsql AS $$
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
 DECLARE
   payment_record record;
 BEGIN
@@ -84,7 +88,11 @@ ON refund_requests
 FOR EACH ROW EXECUTE FUNCTION validate_refund_payment();
 
 CREATE OR REPLACE FUNCTION validate_payment_refunds()
-RETURNS trigger LANGUAGE plpgsql AS $$
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
 BEGIN
   IF EXISTS (
     SELECT 1 FROM refund_requests
@@ -147,7 +155,6 @@ AS $$
 DECLARE
   outbox_id integer;
 BEGIN
-  PERFORM set_config('app.current_actor_role', 'admin', true);
   INSERT INTO outbox (kind, dedupe_key, payload)
   VALUES (outbox_kind, outbox_dedupe_key, outbox_payload)
   ON CONFLICT (dedupe_key) DO NOTHING
@@ -373,14 +380,26 @@ CREATE POLICY customers_all_roles ON customers
   USING (current_setting('app.current_actor_role', true) IN ('support_agent', 'finance_reviewer', 'admin'));
 CREATE POLICY payments_all_roles ON payments
   USING (current_setting('app.current_actor_role', true) IN ('support_agent', 'finance_reviewer', 'admin'));
+CREATE POLICY payments_owner_invariants ON payments
+  FOR SELECT TO devin_powerapps_owner
+  USING (true);
 CREATE POLICY refunds_all_roles ON refund_requests
   USING (current_setting('app.current_actor_role', true) IN ('support_agent', 'finance_reviewer', 'admin'));
+CREATE POLICY refunds_owner_invariants ON refund_requests
+  FOR SELECT TO devin_powerapps_owner
+  USING (true);
 CREATE POLICY approvals_finance ON refund_approvals
   USING (current_setting('app.current_actor_role', true) IN ('support_agent', 'finance_reviewer', 'admin'));
 CREATE POLICY ledger_finance ON ledger_entries
   USING (current_setting('app.current_actor_role', true) IN ('finance_reviewer', 'admin'));
 CREATE POLICY outbox_admin ON outbox
   USING (current_setting('app.current_actor_role', true) = 'admin');
+CREATE POLICY outbox_owner_enqueue ON outbox
+  FOR INSERT TO devin_powerapps_owner
+  WITH CHECK (true);
+CREATE POLICY outbox_owner_dedupe_read ON outbox
+  FOR SELECT TO devin_powerapps_owner
+  USING (true);
 CREATE POLICY provider_calls_finance ON provider_calls
   USING (current_setting('app.current_actor_role', true) IN ('finance_reviewer', 'admin'));
 CREATE POLICY access_log_admin ON access_log

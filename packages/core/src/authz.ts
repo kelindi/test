@@ -38,12 +38,15 @@ export type Capability = {
   role: Role;
   action: Action;
   states?: readonly string[];
+  condition?: string;
 };
 
-const policyTable: Record<
-  Role,
-  Partial<Record<Action, readonly string[] | true>>
-> = {
+type PolicyValue =
+  | true
+  | readonly string[]
+  | { states?: readonly string[]; condition: string };
+
+const policyTable: Record<Role, Partial<Record<Action, PolicyValue>>> = {
   support_agent: {
     'customer:search': true,
     'refund:create': true,
@@ -58,7 +61,7 @@ const policyTable: Record<
     'refund:approve': ['pending_approval'],
     'refund:reject': ['pending_approval'],
     'refund:retry': ['failed'],
-    'audit:read': true,
+    'audit:read': { condition: 'own_decision' },
   },
   admin: {
     'customer:search': true,
@@ -76,12 +79,12 @@ export function capabilityMatrix(): Capability[] {
   return (
     Object.entries(policyTable) as [Role, (typeof policyTable)[Role]][]
   ).flatMap(([role, actions]) =>
-    (Object.entries(actions) as [Action, true | readonly string[]][]).map(
-      ([action, states]) => ({
-        role,
-        action,
-        ...(states === true ? {} : { states }),
-      }),
+    (Object.entries(actions) as [Action, PolicyValue][]).map(
+      ([action, value]) => {
+        if (value === true) return { role, action };
+        if (Array.isArray(value)) return { role, action, states: value };
+        return { role, action, ...value };
+      },
     ),
   );
 }
@@ -96,7 +99,14 @@ export function can(
 
   const capability = policyTable[actor.role][action];
   if (!capability) return false;
-  if (capability !== true && !capability.includes(resource.state ?? '')) {
+  const states = Array.isArray(capability)
+    ? capability
+    : capability === true
+      ? undefined
+      : 'states' in capability
+        ? capability.states
+        : undefined;
+  if (states && !states.includes(resource.state ?? '')) {
     return false;
   }
   if (action === 'refund:cancel') return requester === actor.id;
