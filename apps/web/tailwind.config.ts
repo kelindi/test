@@ -4,6 +4,8 @@ import path from 'node:path';
 export default {
   content: [
     path.join(__dirname, 'app/**/*.{ts,tsx}'),
+    path.join(__dirname, 'components/**/*.{ts,tsx}'),
+    path.join(__dirname, 'lib/**/*.{ts,tsx}'),
     path.join(__dirname, '../../packages/**/*.{ts,tsx}'),
   ],
   theme: {
