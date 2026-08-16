@@ -31,6 +31,11 @@ export const approvalDecision = pgEnum('approval_decision', [
   'approved',
   'rejected',
 ]);
+export const refundSource = pgEnum('refund_source', [
+  'manual',
+  'ticket',
+  'api',
+]);
 
 export const users = pgTable('users', {
   id: text('id').primaryKey(),
@@ -48,18 +53,22 @@ export const customers = pgTable('customers', {
   email: text('email').notNull(),
   accountCreatedAt: timestamp('account_created_at').notNull(),
 });
-export const payments = pgTable('payments', {
-  id: text('id').primaryKey(),
-  customerId: text('customer_id').notNull(),
-  externalPaymentId: text('external_payment_id').notNull().unique(),
-  amountMinor: bigint('amount_minor', { mode: 'bigint' }).notNull(),
-  refundedMinor: bigint('refunded_minor', { mode: 'bigint' })
-    .notNull()
-    .default(0n),
-  currency: text('currency').notNull(),
-  capturedAt: timestamp('captured_at').notNull(),
-  status: text('status').notNull(),
-});
+export const payments = pgTable(
+  'payments',
+  {
+    id: text('id').primaryKey(),
+    customerId: text('customer_id').notNull(),
+    externalPaymentId: text('external_payment_id').notNull().unique(),
+    amountMinor: bigint('amount_minor', { mode: 'bigint' }).notNull(),
+    refundedMinor: bigint('refunded_minor', { mode: 'bigint' })
+      .notNull()
+      .default(0n),
+    currency: text('currency').notNull(),
+    capturedAt: timestamp('captured_at').notNull(),
+    status: text('status').notNull(),
+  },
+  (table) => [unique().on(table.id, table.customerId)],
+);
 export const refundRequests = pgTable('refund_requests', {
   id: text('id').primaryKey(),
   customerId: text('customer_id').notNull(),
@@ -69,8 +78,10 @@ export const refundRequests = pgTable('refund_requests', {
   amountMinor: bigint('amount_minor', { mode: 'bigint' }).notNull(),
   currency: text('currency').notNull(),
   reasonCode: refundReasonCode('reason_code').notNull(),
-  notes: text('notes').notNull(),
+  notes: text('notes'),
   state: refundState('state').notNull(),
+  source: refundSource('source').notNull().default('manual'),
+  externalReference: text('external_reference'),
   idempotencyKey: text('idempotency_key').notNull().unique(),
   createdAt: timestamp('created_at').notNull().defaultNow(),
   updatedAt: timestamp('updated_at').notNull().defaultNow(),

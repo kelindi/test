@@ -1,18 +1,26 @@
 import { describe, expect, it } from 'vitest';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
 import {
+  auditCsv,
   can,
+  capabilityMatrix,
   authenticateUser,
+  approveRefundRequest,
   claimNext,
+  createRefundRequest,
   dispatchRefund,
   FakeStripeProvider,
+  lookupCustomerByEmail,
+  SeededPaymentsClient,
   SYSTEM_ACTOR,
   sweepExecuting,
   money,
   parseMoney,
   refundableBalance,
+  reviewerQueue,
   StateMachine,
   verifyAuditChain,
   withActor,
@@ -23,25 +31,63 @@ const reviewerOne = { id: 'user_finance_1', role: 'finance_reviewer' as const };
 const reviewerTwo = { id: 'user_finance_2', role: 'finance_reviewer' as const };
 
 describe('authorization matrix', () => {
-  it.each([
-    ['support_agent', 'refund:create', true],
-    ['support_agent', 'refund:approve', false],
-    ['support_agent', 'refund:approvals:read', true],
-    ['finance_reviewer', 'refund:create', false],
-    ['finance_reviewer', 'refund:approve', true],
-    ['admin', 'audit:export', true],
-    ['admin', 'refund:approve', false],
-  ])('%s %s -> %s', (role, action, expected) => {
-    const actor = {
-      id: role,
-      role: role as 'support_agent' | 'finance_reviewer' | 'admin',
-    };
-    expect(
-      can(actor, action as never, {
-        state: 'pending_approval',
-        requesterId: 'someone',
-      }),
-    ).toBe(expected);
+  const roles = ['support_agent', 'finance_reviewer', 'admin'] as const;
+  const actions = [
+    'customer:search',
+    'refund:create',
+    'refund:read',
+    'refund:approvals:read',
+    'refund:approve',
+    'refund:reject',
+    'refund:retry',
+    'refund:cancel',
+    'refund:abandon',
+    'audit:read',
+    'audit:export',
+  ] as const;
+  const states = ['pending_approval', 'failed'] as const;
+
+  it('states the authorization decision for every role, action, and state', () => {
+    for (const role of roles) {
+      for (const action of actions) {
+        for (const state of states) {
+          const actor = {
+            id: role,
+            role,
+          };
+          const expected =
+            action === 'customer:search' ||
+            action === 'refund:read' ||
+            action === 'refund:approvals:read'
+              ? true
+              : role === 'support_agent'
+                ? action === 'refund:create' ||
+                  (action === 'refund:cancel' && state === 'pending_approval')
+                : role === 'finance_reviewer'
+                  ? action === 'refund:approve' || action === 'refund:reject'
+                    ? state === 'pending_approval'
+                    : action === 'refund:retry' && state === 'failed'
+                  : action === 'audit:read' ||
+                    action === 'audit:export' ||
+                    (action === 'refund:retry' && state === 'failed') ||
+                    (action === 'refund:abandon' && state === 'failed');
+          expect(
+            can(actor, action, {
+              state,
+              requesterId:
+                role === 'support_agent' && action === 'refund:cancel'
+                  ? role
+                  : 'someone',
+            }),
+          ).toBe(expected);
+        }
+      }
+    }
+  });
+
+  it('generates a capability entry for every action in the policy union', () => {
+    const covered = new Set(capabilityMatrix().map((entry) => entry.action));
+    for (const action of actions) expect(covered.has(action)).toBe(true);
   });
 });
 
@@ -76,6 +122,20 @@ describe('state machine and money', () => {
     expect(refundableBalance(1000n, 400n, 600n)).toBe(0n);
     expect(refundableBalance(1000n, 400n, 599n)).toBe(1n);
     expect(refundableBalance(1000n, 100n, 100n)).toBe(800n);
+  });
+
+  it('round-trips JSONB audit fields in CSV without object stringification', () => {
+    const csv = auditCsv([
+      { id: 1, after_data: { reason: 'customer request', amount: 1250 } },
+    ]);
+    expect(csv).toContain(
+      '"{""reason"":""customer request"",""amount"":1250}"',
+    );
+    const quotedJson = csv.split('\n')[1].match(/,"((?:""|[^"])*)"/)?.[1];
+    expect(JSON.parse(quotedJson!.replaceAll('""', '"'))).toEqual({
+      reason: 'customer request',
+      amount: 1250,
+    });
   });
 });
 
@@ -143,6 +203,263 @@ describe.runIf(Boolean(process.env.DATABASE_URL))(
       });
     });
 
+    it('looks up the selected customer through PaymentsClient and access-logs the PII read', async () => {
+      const customer = await withActor(support, async (client) => {
+        const payments = new SeededPaymentsClient(
+          client,
+          new FakeStripeProvider(),
+        );
+        return lookupCustomerByEmail(
+          client,
+          support,
+          payments,
+          'second@example.com',
+        );
+      });
+      expect(customer).toMatchObject({
+        id: 'customer_2',
+        externalId: 'cus_demo_2',
+        email: 'second@example.com',
+      });
+      const access = await withActor(SYSTEM_ACTOR, (client) =>
+        client.query(
+          `SELECT resource_type, resource_id FROM access_log
+           WHERE actor_id = $1 AND resource_type = 'customer'
+           ORDER BY id DESC LIMIT 1`,
+          [support.id],
+        ),
+      );
+      expect(access.rows[0]).toEqual({
+        resource_type: 'customer',
+        resource_id: 'customer_2',
+      });
+    });
+
+    it('projects the reviewer queue in one RLS-scoped data-layer query', async () => {
+      const id = `queue-${crypto.randomUUID()}`;
+      await withActor(support, (client) =>
+        client.query(
+          `INSERT INTO refund_requests
+            (id, customer_id, payment_id, payment_snapshot, requested_by,
+             amount_minor, currency, reason_code, notes, state, idempotency_key)
+           VALUES ($1, 'customer_1', 'payment_1', '{}', $2, 100, 'USD',
+                   'customer_request', NULL, 'pending_approval', $3)`,
+          [id, support.id, `queue-key-${id}`],
+        ),
+      );
+      const rows = await reviewerQueue(reviewerOne);
+      expect(rows).toContainEqual(
+        expect.objectContaining({
+          id,
+          customerId: 'customer_1',
+          requestedAmountMinor: 100n,
+          originalAmountMinor: 250000n,
+          reasonCode: 'customer_request',
+          requesterId: support.id,
+          needsTwoApprovals: false,
+          source: 'manual',
+          externalReference: null,
+        }),
+      );
+      await withActor(support, (client) =>
+        client.query('DELETE FROM refund_requests WHERE id = $1', [id]),
+      );
+    });
+
+    it('rejects mismatched customer and payment selections through the refund creation boundary', async () => {
+      await expect(
+        withActor(support, (client) =>
+          createRefundRequest(
+            client,
+            new SeededPaymentsClient(client, new FakeStripeProvider()),
+            {
+              customerId: 'customer_2',
+              paymentId: 'payment_1',
+              amountMinor: 100n,
+              currency: 'USD',
+              reasonCode: 'customer_request',
+              notes: 'Boundary test',
+              requestedBy: support.id,
+              idempotencyKey: `mismatch-${crypto.randomUUID()}`,
+            },
+          ),
+        ),
+      ).rejects.toThrow('does not belong');
+    });
+
+    it('finance approval atomically settles state and enqueues execution work', async () => {
+      const suffix = crypto.randomUUID();
+      const refundId = `approval-action-${suffix}`;
+      await withActor(support, async (client) => {
+        await client.query(
+          `INSERT INTO refund_requests
+            (id, customer_id, payment_id, payment_snapshot, requested_by,
+             amount_minor, currency, reason_code, notes, state, idempotency_key)
+           VALUES ($1, 'customer_1', 'payment_2', '{}', 'user_support',
+                   100, 'USD', 'other', 'Approval action test',
+                   'pending_approval', $2)`,
+          [refundId, `approval-key-${suffix}`],
+        );
+      });
+      await withActor(reviewerOne, async (client) => {
+        await approveRefundRequest(
+          client,
+          reviewerOne,
+          refundId,
+          'refund:approve',
+          'Approved',
+        );
+      });
+      const result = await withActor(reviewerOne, (client) =>
+        client.query('SELECT state FROM refund_requests WHERE id = $1', [
+          refundId,
+        ]),
+      );
+      expect(result.rows[0]).toEqual({ state: 'approved' });
+      const outbox = await withActor(SYSTEM_ACTOR, (client) =>
+        client.query('SELECT dedupe_key FROM outbox WHERE dedupe_key = $1', [
+          `refund:${refundId}`,
+        ]),
+      );
+      expect(outbox.rows[0]).toEqual({
+        dedupe_key: `refund:${refundId}`,
+      });
+      await withActor(SYSTEM_ACTOR, (client) =>
+        client.query('DELETE FROM outbox WHERE dedupe_key = $1', [
+          `refund:${refundId}`,
+        ]),
+      );
+      await withActor(SYSTEM_ACTOR, (client) =>
+        client.query(
+          'DELETE FROM refund_approvals WHERE refund_request_id = $1',
+          [refundId],
+        ),
+      );
+      await withActor(SYSTEM_ACTOR, (client) =>
+        client.query('DELETE FROM refund_requests WHERE id = $1', [refundId]),
+      );
+    });
+
+    it('enforces the selected charge cap after external refunds and multiple in-flight partials', async () => {
+      const suffix = crypto.randomUUID();
+      const inFlightIds = [`in-flight-a-${suffix}`, `in-flight-b-${suffix}`];
+      await withActor(support, async (client) => {
+        for (const [index, id] of inFlightIds.entries()) {
+          await client.query(
+            `INSERT INTO refund_requests
+              (id, customer_id, payment_id, payment_snapshot, requested_by,
+               amount_minor, currency, reason_code, notes, state, idempotency_key)
+             VALUES ($1, 'customer_1', 'payment_1', '{}', 'user_support',
+                     50000, 'USD', 'other', 'In-flight test', 'pending_approval', $2)`,
+            [id, `in-flight-key-${index}-${suffix}`],
+          );
+        }
+      });
+      await expect(
+        withActor(support, (client) =>
+          createRefundRequest(
+            client,
+            new SeededPaymentsClient(client, new FakeStripeProvider()),
+            {
+              customerId: 'customer_1',
+              paymentId: 'payment_1',
+              amountMinor: 100001n,
+              currency: 'USD',
+              reasonCode: 'customer_request',
+              notes: 'Over cap',
+              requestedBy: support.id,
+              idempotencyKey: `over-cap-${suffix}`,
+            },
+          ),
+        ),
+      ).rejects.toThrow('remaining refundable balance');
+      const created = await withActor(support, (client) =>
+        createRefundRequest(
+          client,
+          new SeededPaymentsClient(client, new FakeStripeProvider()),
+          {
+            customerId: 'customer_1',
+            paymentId: 'payment_1',
+            amountMinor: undefined,
+            currency: 'USD',
+            reasonCode: 'customer_request',
+            notes: 'At cap',
+            requestedBy: support.id,
+            idempotencyKey: `at-cap-${suffix}`,
+          },
+        ),
+      );
+      expect(created).toEqual(expect.any(String));
+      const createdAmount = await withActor(support, (client) =>
+        client.query('SELECT amount_minor FROM refund_requests WHERE id = $1', [
+          created,
+        ]),
+      );
+      expect(createdAmount.rows[0].amount_minor).toBe('100000');
+      await withActor(support, (client) =>
+        client.query(
+          `DELETE FROM refund_requests
+           WHERE id = ANY($1::text[]) OR idempotency_key = $2`,
+          [inFlightIds, `at-cap-${suffix}`],
+        ),
+      );
+    });
+
+    it('database constraints reject cross-customer, currency, and over-amount refund writes', async () => {
+      const cases = [
+        {
+          message: /foreign key|payment does not belong/i,
+          values: ['raw-mismatch', 'customer_2', 'payment_1', 100, 'USD'] as [
+            string,
+            string,
+            string,
+            number,
+            string,
+          ],
+        },
+        {
+          message: /currency must match/i,
+          values: ['raw-currency', 'customer_1', 'payment_1', 100, 'EUR'] as [
+            string,
+            string,
+            string,
+            number,
+            string,
+          ],
+        },
+        {
+          message: /amount exceeds/i,
+          values: ['raw-amount', 'customer_1', 'payment_1', 250001, 'USD'] as [
+            string,
+            string,
+            string,
+            number,
+            string,
+          ],
+        },
+        {
+          message: /check constraint|violates check/i,
+          values: ['raw-notes', 'customer_1', 'payment_1', 100, 'USD'],
+        },
+      ];
+      for (const [index, testCase] of cases.entries()) {
+        await expect(
+          withActor(support, (client) =>
+            client.query(
+              `INSERT INTO refund_requests
+                (id, customer_id, payment_id, payment_snapshot, requested_by,
+                 amount_minor, currency, reason_code, notes, state, idempotency_key)
+               VALUES ($1, $2, $3, '{}', 'user_support', $4, $5,
+                       $6, $7, 'pending_approval', $1)`,
+              index === 3
+                ? [...testCase.values, 'other', null]
+                : [...testCase.values, 'other', 'raw constraint test'],
+            ),
+          ),
+        ).rejects.toThrow(testCase.message);
+      }
+    });
+
     it('executes an approved refund exactly once through outbox and ledger', async () => {
       const id = `refund-worker-${Date.now()}`;
       const key = `key-${id}`;
@@ -160,19 +477,15 @@ describe.runIf(Boolean(process.env.DATABASE_URL))(
             key,
           ],
         );
-        await client.query(
-          `INSERT INTO outbox (kind, dedupe_key, payload)
-             VALUES ('refund.execute', $1, $2)`,
-          [
-            id,
-            JSON.stringify({
-              refundId: id,
-              paymentId: 'payment_1',
-              amountMinor: '2',
-              idempotencyKey: key,
-            }),
-          ],
-        );
+        await client.query(`SELECT enqueue_outbox('refund.execute', $1, $2)`, [
+          id,
+          JSON.stringify({
+            refundId: id,
+            paymentId: 'payment_1',
+            amountMinor: '2',
+            idempotencyKey: key,
+          }),
+        ]);
       });
       const provider = new FakeStripeProvider();
       await withActor(SYSTEM_ACTOR, async (client) => {
@@ -223,19 +536,15 @@ describe.runIf(Boolean(process.env.DATABASE_URL))(
             key,
           ],
         );
-        await client.query(
-          `INSERT INTO outbox (kind, dedupe_key, payload)
-           VALUES ('refund.execute', $1, $2)`,
-          [
-            id,
-            JSON.stringify({
-              refundId: id,
-              paymentId: 'payment_1',
-              amountMinor: '3',
-              idempotencyKey: key,
-            }),
-          ],
-        );
+        await client.query(`SELECT enqueue_outbox('refund.execute', $1, $2)`, [
+          id,
+          JSON.stringify({
+            refundId: id,
+            paymentId: 'payment_1',
+            amountMinor: '3',
+            idempotencyKey: key,
+          }),
+        ]);
       });
       const provider = new FakeStripeProvider();
       provider.mode = 'timeout_then_succeeded';

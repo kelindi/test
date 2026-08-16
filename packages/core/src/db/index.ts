@@ -149,6 +149,20 @@ export async function logAccess(
   );
 }
 
+export async function enqueueOutbox(
+  client: DatabaseClient,
+  kind: string,
+  dedupeKey: string,
+  payload: Record<string, unknown>,
+): Promise<number> {
+  const result = await client.query('SELECT enqueue_outbox($1, $2, $3) AS id', [
+    kind,
+    dedupeKey,
+    JSON.stringify(payload),
+  ]);
+  return result.rows[0].id as number;
+}
+
 export async function verifyAuditChain(): Promise<boolean> {
   const rows = (await pool.query('SELECT * FROM audit_log ORDER BY id')).rows;
   let previousHash = '';

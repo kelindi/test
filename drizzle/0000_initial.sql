@@ -5,6 +5,7 @@ CREATE TYPE refund_reason_code AS ENUM
 CREATE TYPE refund_state AS ENUM
   ('pending_approval', 'approved', 'executing', 'succeeded', 'failed', 'rejected', 'cancelled');
 CREATE TYPE approval_decision AS ENUM ('approved', 'rejected');
+CREATE TYPE refund_source AS ENUM ('manual', 'ticket', 'api');
 
 CREATE TABLE users (
   id text PRIMARY KEY,
@@ -32,7 +33,8 @@ CREATE TABLE payments (
   refunded_minor bigint NOT NULL DEFAULT 0 CHECK (refunded_minor >= 0),
   currency text NOT NULL,
   captured_at timestamptz NOT NULL,
-  status text NOT NULL
+  status text NOT NULL,
+  UNIQUE (id, customer_id)
 );
 
 CREATE TABLE refund_requests (
@@ -44,12 +46,60 @@ CREATE TABLE refund_requests (
   amount_minor bigint NOT NULL CHECK (amount_minor > 0),
   currency text NOT NULL,
   reason_code refund_reason_code NOT NULL,
-  notes text NOT NULL,
+  notes text,
   state refund_state NOT NULL,
+  source refund_source NOT NULL DEFAULT 'manual',
+  external_reference text,
   idempotency_key text NOT NULL UNIQUE,
+  FOREIGN KEY (customer_id, payment_id) REFERENCES payments(customer_id, id),
   created_at timestamptz NOT NULL DEFAULT now(),
-  updated_at timestamptz NOT NULL DEFAULT now()
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  CHECK (reason_code <> 'other' OR NULLIF(btrim(notes), '') IS NOT NULL)
 );
+
+CREATE OR REPLACE FUNCTION validate_refund_payment()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE
+  payment_record record;
+BEGIN
+  SELECT amount_minor, currency INTO payment_record
+  FROM payments
+  WHERE id = NEW.payment_id AND customer_id = NEW.customer_id;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'refund payment does not belong to customer';
+  END IF;
+  IF NEW.currency <> payment_record.currency THEN
+    RAISE EXCEPTION 'refund currency must match payment currency';
+  END IF;
+  IF NEW.amount_minor > payment_record.amount_minor THEN
+    RAISE EXCEPTION 'refund amount exceeds payment amount';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER refund_payment_invariants
+BEFORE INSERT OR UPDATE OF customer_id, payment_id, amount_minor, currency
+ON refund_requests
+FOR EACH ROW EXECUTE FUNCTION validate_refund_payment();
+
+CREATE OR REPLACE FUNCTION validate_payment_refunds()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM refund_requests
+    WHERE payment_id = NEW.id
+      AND (currency <> NEW.currency OR amount_minor > NEW.amount_minor)
+  ) THEN
+    RAISE EXCEPTION 'payment update would invalidate an existing refund';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER payment_refund_invariants
+AFTER UPDATE OF amount_minor, currency ON payments
+FOR EACH ROW EXECUTE FUNCTION validate_payment_refunds();
 
 CREATE TABLE refund_approvals (
   id serial PRIMARY KEY,
@@ -84,6 +134,30 @@ CREATE TABLE outbox (
   next_attempt_at timestamptz NOT NULL DEFAULT now(),
   created_at timestamptz NOT NULL DEFAULT now()
 );
+
+CREATE OR REPLACE FUNCTION enqueue_outbox(
+  outbox_kind text,
+  outbox_dedupe_key text,
+  outbox_payload jsonb
+) RETURNS integer
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  outbox_id integer;
+BEGIN
+  PERFORM set_config('app.current_actor_role', 'admin', true);
+  INSERT INTO outbox (kind, dedupe_key, payload)
+  VALUES (outbox_kind, outbox_dedupe_key, outbox_payload)
+  ON CONFLICT (dedupe_key) DO NOTHING
+  RETURNING id INTO outbox_id;
+  IF outbox_id IS NULL THEN
+    SELECT id INTO outbox_id FROM outbox WHERE dedupe_key = outbox_dedupe_key;
+  END IF;
+  RETURN outbox_id;
+END;
+$$;
 
 CREATE TABLE provider_calls (
   id serial PRIMARY KEY,
@@ -307,11 +381,6 @@ CREATE POLICY ledger_finance ON ledger_entries
   USING (current_setting('app.current_actor_role', true) IN ('finance_reviewer', 'admin'));
 CREATE POLICY outbox_admin ON outbox
   USING (current_setting('app.current_actor_role', true) = 'admin');
-CREATE POLICY outbox_enqueue ON outbox
-  FOR INSERT
-  WITH CHECK (
-    current_setting('app.current_actor_role', true) IN ('finance_reviewer', 'admin')
-  );
 CREATE POLICY provider_calls_finance ON provider_calls
   USING (current_setting('app.current_actor_role', true) IN ('finance_reviewer', 'admin'));
 CREATE POLICY access_log_admin ON access_log
@@ -321,7 +390,10 @@ CREATE POLICY access_log_insert ON access_log
   WITH CHECK (actor_id = current_setting('app.current_actor_id', true));
 
 GRANT SELECT, INSERT, UPDATE, DELETE ON users, customers, payments, refund_requests,
-  refund_approvals, ledger_entries, outbox, provider_calls TO devin_powerapps_app;
+  refund_approvals, ledger_entries, provider_calls TO devin_powerapps_app;
+GRANT SELECT, UPDATE, DELETE ON outbox TO devin_powerapps_app;
+REVOKE INSERT ON outbox FROM devin_powerapps_app;
+GRANT EXECUTE ON FUNCTION enqueue_outbox(text, text, jsonb) TO devin_powerapps_app;
 GRANT SELECT, INSERT, UPDATE, DELETE ON access_log TO devin_powerapps_app;
 GRANT SELECT, INSERT ON application_audit_events TO devin_powerapps_app;
 GRANT SELECT ON audit_log, sensitive_columns TO devin_powerapps_app;

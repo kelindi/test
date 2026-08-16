@@ -1,7 +1,7 @@
 import Link from 'next/link';
 
 import { auth } from '../../../auth';
-import { readAs } from '@internal/core';
+import { reviewerQueue } from '@internal/core';
 
 export default async function RefundQueuePage() {
   const session = await auth();
@@ -16,15 +16,7 @@ export default async function RefundQueuePage() {
     id: session.user.id,
     role: session.user.role as 'support_agent' | 'finance_reviewer' | 'admin',
   };
-  const rows: any[] = await readAs(
-    actor,
-    async (client) =>
-      (
-        await client.query(
-          'SELECT id, amount_minor, currency, reason_code, state, created_at FROM refund_requests ORDER BY created_at DESC',
-        )
-      ).rows,
-  );
+  const rows = await reviewerQueue(actor);
 
   return (
     <main>
@@ -40,7 +32,12 @@ export default async function RefundQueuePage() {
           <tr>
             <th>ID</th>
             <th>Amount</th>
+            <th>Customer</th>
             <th>Reason</th>
+            <th>Requester</th>
+            <th>Age</th>
+            <th>Approvals</th>
+            <th>Source</th>
             <th>State</th>
           </tr>
         </thead>
@@ -51,9 +48,19 @@ export default async function RefundQueuePage() {
                 <Link href={`/refunds/${row.id}`}>{row.id}</Link>
               </td>
               <td>
-                {row.currency} {(Number(row.amount_minor) / 100).toFixed(2)}
+                ${(Number(row.requestedAmountMinor) / 100).toFixed(2)} / $
+                {(Number(row.originalAmountMinor) / 100).toFixed(2)}
               </td>
-              <td>{row.reason_code}</td>
+              <td>
+                {row.customerName} ({row.customerEmail})
+              </td>
+              <td>{row.reasonCode}</td>
+              <td>{row.requesterId}</td>
+              <td>{row.age}</td>
+              <td>
+                {row.approvalCount} / {row.needsTwoApprovals ? 2 : 1}
+              </td>
+              <td>{row.source}</td>
               <td>{row.state}</td>
             </tr>
           ))}

@@ -16,6 +16,9 @@ await owner.query(`
   DROP FUNCTION IF EXISTS create_monthly_audit_partitions(date);
   DROP FUNCTION IF EXISTS install_audit_trigger(text);
   DROP FUNCTION IF EXISTS audit_row() CASCADE;
+  DROP FUNCTION IF EXISTS validate_refund_payment() CASCADE;
+  DROP FUNCTION IF EXISTS validate_payment_refunds() CASCADE;
+  DROP FUNCTION IF EXISTS enqueue_outbox(text, text, jsonb) CASCADE;
   DROP FUNCTION IF EXISTS redact_snapshot(jsonb, text);
   DROP FUNCTION IF EXISTS require_actor();
   DROP FUNCTION IF EXISTS deny_audit_mutation();
@@ -23,6 +26,7 @@ await owner.query(`
   DROP TYPE IF EXISTS approval_decision CASCADE;
   DROP TYPE IF EXISTS refund_state CASCADE;
   DROP TYPE IF EXISTS refund_reason_code CASCADE;
+  DROP TYPE IF EXISTS refund_source CASCADE;
 `);
 await owner.query(
   fs.readFileSync(path.join(process.cwd(), 'drizzle/0000_initial.sql'), 'utf8'),
@@ -54,12 +58,22 @@ await owner.query(
 
 await owner.query(
   `INSERT INTO customers (id, external_id, name, email, account_created_at)
-   VALUES ('customer_1', 'cus_demo_1', 'Demo Customer', 'customer@example.com', now() - interval '2 years')`,
+   VALUES
+     ('customer_1', 'cus_demo_1', 'Demo Customer', 'customer@example.com', now() - interval '2 years'),
+     ('customer_2', 'cus_demo_2', 'Second Customer', 'second@example.com', now() - interval '18 months'),
+     ('customer_3', 'cus_demo_3', 'Third Customer', 'third@example.com', now() - interval '1 year')`,
 );
 await owner.query(
   `INSERT INTO payments
     (id, customer_id, external_payment_id, amount_minor, refunded_minor, currency, captured_at, status)
-   VALUES ('payment_1', 'customer_1', 'ch_demo_1', 250000, 0, 'USD', now() - interval '30 days', 'captured')`,
+   VALUES
+     ('payment_1', 'customer_1', 'ch_demo_1', 250000, 50000, 'USD', now() - interval '30 days', 'captured'),
+     ('payment_2', 'customer_1', 'ch_demo_2', 5000, 0, 'USD', now() - interval '20 days', 'captured'),
+     ('payment_3', 'customer_1', 'ch_demo_3', 12500, 1000, 'USD', now() - interval '10 days', 'captured'),
+     ('payment_4', 'customer_2', 'ch_demo_4', 9900, 0, 'USD', now() - interval '15 days', 'captured'),
+     ('payment_5', 'customer_2', 'ch_demo_5', 75000, 25000, 'USD', now() - interval '8 days', 'captured'),
+     ('payment_6', 'customer_3', 'ch_demo_6', 12000, 0, 'USD', now() - interval '6 days', 'captured'),
+     ('payment_7', 'customer_3', 'ch_demo_7', 43000, 5000, 'USD', now() - interval '3 days', 'captured')`,
 );
 
 await owner.end();

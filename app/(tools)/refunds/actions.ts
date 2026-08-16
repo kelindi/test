@@ -7,15 +7,19 @@ import { z } from 'zod';
 import { auth } from '../../../auth';
 import {
   auditEvent,
+  approveRefundRequest,
   can,
+  createRefundRequest,
   defineAction,
+  enqueueOutbox,
   FakeStripeProvider,
+  logAccess,
+  lookupCustomerByEmail,
   newRefundIdempotencyKey,
   parseMoney,
+  readAs,
   refundableBalance,
-  refundTransitions,
   SeededPaymentsClient,
-  StateMachine,
   withActor,
 } from '@internal/core';
 
@@ -35,6 +39,52 @@ async function currentActor() {
   return { id: session.user.id, role: session.user.role as Role };
 }
 
+export async function searchCustomer(email: string) {
+  const actor = await currentActor();
+  if (!actor || !can(actor, 'customer:search')) {
+    throw new Error('Not authorized');
+  }
+  return readAs(actor, async (client) => {
+    const traceId = crypto.randomUUID();
+    const payments = new SeededPaymentsClient(client, new FakeStripeProvider());
+    return lookupCustomerByEmail(client, actor, payments, email, traceId);
+  });
+}
+
+export async function listCustomerPayments(customerId: string) {
+  const actor = await currentActor();
+  if (!actor || !can(actor, 'customer:search')) {
+    throw new Error('Not authorized');
+  }
+  return readAs(actor, async (client) => {
+    const traceId = crypto.randomUUID();
+    const payments = new SeededPaymentsClient(client, new FakeStripeProvider());
+    const result = await payments.listCustomerPayments(customerId);
+    const inFlightRows = (
+      await client.query(
+        `SELECT payment_id, COALESCE(sum(amount_minor), 0) AS amount
+         FROM refund_requests
+         WHERE payment_id = ANY($1::text[])
+           AND state IN ('pending_approval', 'approved', 'executing')
+         GROUP BY payment_id`,
+        [result.map((payment) => payment.id)],
+      )
+    ).rows;
+    const inFlight = new Map(
+      inFlightRows.map((row) => [row.payment_id, BigInt(row.amount)]),
+    );
+    await logAccess(client, actor, 'customer', customerId, traceId);
+    return result.map((payment) => ({
+      ...payment,
+      remainingMinor: refundableBalance(
+        payment.amountMinor,
+        payment.refundedMinor,
+        inFlight.get(payment.id) ?? 0n,
+      ),
+    }));
+  });
+}
+
 export async function createRefund(formData: FormData) {
   const actor = await currentActor();
   const idempotencyKey = String(
@@ -44,66 +94,51 @@ export async function createRefund(formData: FormData) {
     actor,
     'refund:create',
     {},
-    z.object({
-      amount: z.string(),
-      reasonCode: z.enum(reasonCodes),
-      notes: z.string().min(1).max(1000),
-    }),
+    z
+      .object({
+        customerId: z.string().min(1),
+        paymentId: z.string().min(1),
+        amount: z.string().optional(),
+        reasonCode: z.enum(reasonCodes),
+        notes: z.string().max(1000),
+        source: z.enum(['manual', 'ticket', 'api']).default('manual'),
+        externalReference: z.string().max(500).optional(),
+      })
+      .refine(
+        (input) =>
+          input.reasonCode !== 'other' || input.notes.trim().length > 0,
+        { message: 'Notes are required when reason is other', path: ['notes'] },
+      ),
     {
-      amount: String(formData.get('amount')),
+      customerId: String(formData.get('customerId')),
+      paymentId: String(formData.get('paymentId')),
+      amount: String(formData.get('amount') ?? ''),
       reasonCode: String(formData.get('reasonCode')),
       notes: String(formData.get('notes') ?? ''),
+      source: String(formData.get('source') ?? 'manual'),
+      externalReference:
+        String(formData.get('externalReference') ?? '') || undefined,
     },
     async (client, input, traceId) => {
-      const amount = parseMoney(input.amount, 'USD');
+      const amount = input.amount?.trim()
+        ? parseMoney(input.amount, 'USD')
+        : null;
       const payments = new SeededPaymentsClient(
         client,
         new FakeStripeProvider(),
       );
-      const payment = await payments.getPayment('payment_1');
-      if (!payment) throw new Error('Payment not found');
-      const inFlight = (
-        await client.query(
-          `SELECT COALESCE(sum(amount_minor), 0) AS amount
-           FROM refund_requests
-           WHERE payment_id = $1 AND state IN ('pending_approval', 'approved', 'executing')`,
-          [payment.id],
-        )
-      ).rows[0].amount;
-      if (
-        amount.minor >
-        refundableBalance(
-          payment.amountMinor,
-          payment.refundedMinor,
-          BigInt(inFlight),
-        )
-      ) {
-        throw new Error('Amount exceeds remaining refundable balance');
-      }
-      const id = crypto.randomUUID();
-      await client.query(
-        `INSERT INTO refund_requests
-          (id, customer_id, payment_id, payment_snapshot, requested_by, amount_minor,
-           currency, reason_code, notes, state, idempotency_key)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'pending_approval', $10)
-         ON CONFLICT (idempotency_key) DO NOTHING`,
-        [
-          id,
-          payment.customerId,
-          payment.id,
-          JSON.stringify({
-            ...payment,
-            amountMinor: payment.amountMinor.toString(),
-            refundedMinor: payment.refundedMinor.toString(),
-          }),
-          actor?.id,
-          amount.minor.toString(),
-          payment.currency,
-          input.reasonCode,
-          input.notes,
-          idempotencyKey,
-        ],
-      );
+      const id = await createRefundRequest(client, payments, {
+        customerId: input.customerId,
+        paymentId: input.paymentId,
+        amountMinor: amount?.minor,
+        currency: amount?.currency ?? 'USD',
+        reasonCode: input.reasonCode,
+        notes: input.notes,
+        requestedBy: actor!.id,
+        idempotencyKey,
+        source: input.source,
+        externalReference: input.externalReference,
+      });
       await auditEvent(
         client,
         'refund.created',
@@ -111,13 +146,7 @@ export async function createRefund(formData: FormData) {
         { refundId: id },
         traceId,
       );
-      const existing = (
-        await client.query(
-          'SELECT id FROM refund_requests WHERE idempotency_key = $1',
-          [idempotencyKey],
-        )
-      ).rows[0];
-      return existing.id as string;
+      return id;
     },
   );
   if (!result.ok) throw new Error(result.error);
@@ -132,92 +161,7 @@ async function transitionRefund(
   const actor = await currentActor();
   if (!actor) throw new Error('Authentication required');
   await withActor(actor, async (client, traceId) => {
-    const refund = (
-      await client.query(
-        'SELECT * FROM refund_requests WHERE id = $1 FOR UPDATE',
-        [id],
-      )
-    ).rows[0];
-    if (!refund) throw new Error('Refund not found');
-    const approvals = (
-      await client.query(
-        `SELECT approver_id FROM refund_approvals
-       WHERE refund_request_id = $1 AND decision = 'approved'`,
-        [id],
-      )
-    ).rows.map((row) => row.approver_id);
-    if (
-      !can(actor, action, {
-        state: refund.state,
-        requesterId: refund.requested_by,
-        approvalActorIds: approvals,
-      })
-    ) {
-      throw new Error('Not authorized');
-    }
-    const machine = new StateMachine(refundTransitions);
-    const next = action === 'refund:reject' ? 'rejected' : 'approved';
-    machine.transition(
-      refund.state,
-      next,
-      actor,
-      action,
-      [{ transition: 'refund:create', actorId: refund.requested_by }],
-      {
-        state: refund.state,
-        requesterId: refund.requested_by,
-        approvalActorIds: approvals,
-      },
-    );
-    await client.query(
-      `INSERT INTO refund_approvals
-        (refund_request_id, approver_id, decision, reason_code, comment)
-       VALUES ($1, $2, $3, $4, $5)`,
-      [
-        id,
-        actor.id,
-        action === 'refund:approve' ? 'approved' : 'rejected',
-        refund.reason_code,
-        comment,
-      ],
-    );
-    if (action === 'refund:reject') {
-      await client.query(
-        "UPDATE refund_requests SET state = 'rejected', updated_at = now() WHERE id = $1",
-        [id],
-      );
-    } else {
-      const threshold = BigInt(
-        process.env.REFUND_APPROVAL_THRESHOLD_MINOR ?? '100000',
-      );
-      const count = approvals.length + 1;
-      if (BigInt(refund.amount_minor) < threshold || count >= 2) {
-        await client.query(
-          "UPDATE refund_requests SET state = 'approved', updated_at = now() WHERE id = $1",
-          [id],
-        );
-        await client.query(
-          `INSERT INTO outbox (kind, dedupe_key, payload)
-           VALUES ('refund.execute', $1, $2) ON CONFLICT (dedupe_key) DO NOTHING`,
-          [
-            `refund:${id}`,
-            JSON.stringify({
-              refundId: id,
-              paymentId: refund.payment_id,
-              amountMinor: refund.amount_minor.toString(),
-              idempotencyKey: refund.idempotency_key,
-            }),
-          ],
-        );
-      }
-    }
-    await auditEvent(
-      client,
-      'refund.transitioned',
-      actor,
-      { refundId: id, action, next },
-      traceId,
-    );
+    await approveRefundRequest(client, actor, id, action, comment, traceId);
   });
   revalidatePath(`/refunds/${id}`);
   revalidatePath('/refunds');
