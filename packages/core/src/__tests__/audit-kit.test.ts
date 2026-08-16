@@ -61,8 +61,7 @@ runWithDatabase('auditor-facing audit completeness kit', () => {
       ).rows[0].id;
       const outbox = (
         await client.query(
-          `INSERT INTO outbox (kind, dedupe_key, payload)
-           VALUES ('audit.test', $1, '{}') RETURNING id`,
+          `SELECT enqueue_outbox('audit.test', $1, '{}') AS id`,
           [`outbox-${suffix}`],
         )
       ).rows[0].id;
@@ -239,11 +238,9 @@ runWithDatabase('auditor-facing audit completeness kit', () => {
       ),
     ).rejects.toThrow(/unique/i);
     await withActor(SYSTEM_ACTOR, async (client) => {
-      await client.query(
-        `INSERT INTO outbox (kind, dedupe_key, payload)
-         VALUES ('claim.test', $1, '{}')`,
-        [outboxKey],
-      );
+      await client.query(`SELECT enqueue_outbox('claim.test', $1, '{}')`, [
+        outboxKey,
+      ]);
     });
 
     const claimed = await Promise.all(

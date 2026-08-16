@@ -47,9 +47,6 @@ export default async function RefundDetailPage({
         {refund.state}
       </p>
       <p>Reason: {refund.reason_code}</p>
-      <p>
-        Fraud signals: velocity low · refund ratio 10% · account age 2 years
-      </p>
       {session.user.role === 'finance_reviewer' &&
         refund.state === 'pending_approval' && (
           <>

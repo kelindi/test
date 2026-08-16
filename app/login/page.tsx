@@ -1,13 +1,25 @@
 import { signIn } from '../../auth';
+import { redirect } from 'next/navigation';
 
-export default function LoginPage() {
+export default async function LoginPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ error?: string }>;
+}) {
+  const { error } = await searchParams;
   async function login(formData: FormData) {
     'use server';
-    await signIn('credentials', {
-      email: String(formData.get('email')),
-      password: String(formData.get('password')),
-      redirectTo: '/refunds',
-    });
+    try {
+      const result = (await signIn('credentials', {
+        email: String(formData.get('email')),
+        password: String(formData.get('password')),
+        redirect: false,
+      })) as { error?: string } | undefined;
+      if (result?.error) redirect('/login?error=1');
+    } catch {
+      redirect('/login?error=1');
+    }
+    redirect('/refunds');
   }
 
   return (
@@ -24,6 +36,7 @@ export default function LoginPage() {
         </label>
         <button type="submit">Sign in</button>
       </form>
+      {error && <p>Invalid email or password.</p>}
       <p>Demo accounts are documented in README.md.</p>
     </main>
   );

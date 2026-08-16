@@ -15,6 +15,7 @@ export const SYSTEM_ACTOR: Actor = {
 };
 
 export type Action =
+  | 'customer:search'
   | 'refund:create'
   | 'refund:read'
   | 'refund:approvals:read'
@@ -33,6 +34,58 @@ export type RefundResource = {
   approvalActorIds?: string[];
 };
 
+export type Capability = {
+  role: Role;
+  action: Action;
+  states?: readonly string[];
+};
+
+const policyTable: Record<
+  Role,
+  Partial<Record<Action, readonly string[] | true>>
+> = {
+  support_agent: {
+    'customer:search': true,
+    'refund:create': true,
+    'refund:read': true,
+    'refund:approvals:read': true,
+    'refund:cancel': ['pending_approval'],
+  },
+  finance_reviewer: {
+    'customer:search': true,
+    'refund:read': true,
+    'refund:approvals:read': true,
+    'refund:approve': ['pending_approval'],
+    'refund:reject': ['pending_approval'],
+    'refund:retry': ['failed'],
+    'audit:read': true,
+  },
+  admin: {
+    'customer:search': true,
+    'refund:read': true,
+    'refund:approvals:read': true,
+    'refund:retry': ['failed'],
+    'refund:cancel': ['pending_approval'],
+    'refund:abandon': ['failed'],
+    'audit:read': true,
+    'audit:export': true,
+  },
+};
+
+export function capabilityMatrix(): Capability[] {
+  return (
+    Object.entries(policyTable) as [Role, (typeof policyTable)[Role]][]
+  ).flatMap(([role, actions]) =>
+    (Object.entries(actions) as [Action, true | readonly string[]][]).map(
+      ([action, states]) => ({
+        role,
+        action,
+        ...(states === true ? {} : { states }),
+      }),
+    ),
+  );
+}
+
 export function can(
   actor: Actor,
   action: Action,
@@ -41,48 +94,17 @@ export function can(
   const requester = resource.requestedBy ?? resource.requesterId;
   const approvals = resource.approvalActorIds ?? [];
 
-  if (actor.role === 'support_agent') {
-    if (
-      action === 'refund:create' ||
-      action === 'refund:read' ||
-      action === 'refund:approvals:read'
-    )
-      return true;
-    return (
-      action === 'refund:cancel' &&
-      requester === actor.id &&
-      resource.state === 'pending_approval'
-    );
-  }
-
-  if (actor.role === 'finance_reviewer') {
-    if (action === 'refund:read' || action === 'refund:approvals:read')
-      return true;
-    if (action === 'refund:approve' || action === 'refund:reject') {
-      return (
-        resource.state === 'pending_approval' &&
-        requester !== actor.id &&
-        !approvals.includes(actor.id)
-      );
-    }
-    if (action === 'refund:retry') return resource.state === 'failed';
-    if (action === 'audit:read') return approvals.includes(actor.id);
+  const capability = policyTable[actor.role][action];
+  if (!capability) return false;
+  if (capability !== true && !capability.includes(resource.state ?? '')) {
     return false;
   }
-
-  if (actor.role === 'admin') {
-    if (
-      action === 'refund:read' ||
-      action === 'refund:approvals:read' ||
-      action === 'audit:read' ||
-      action === 'audit:export'
-    )
-      return true;
-    if (action === 'refund:retry') return resource.state === 'failed';
-    if (action === 'refund:cancel')
-      return requester === actor.id && resource.state === 'pending_approval';
-    if (action === 'refund:abandon') return resource.state === 'failed';
+  if (action === 'refund:cancel') return requester === actor.id;
+  if (action === 'refund:approve' || action === 'refund:reject') {
+    return requester !== actor.id && !approvals.includes(actor.id);
   }
-
-  return false;
+  if (action === 'audit:read' && actor.role === 'finance_reviewer') {
+    return approvals.includes(actor.id);
+  }
+  return true;
 }

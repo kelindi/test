@@ -40,8 +40,15 @@ export async function queryAudit(actor: Actor, filter: AuditFilter = {}) {
 export function auditCsv(rows: Record<string, unknown>[]): string {
   if (!rows.length) return '';
   const columns = Object.keys(rows[0]);
-  const escape = (value: unknown) =>
-    `"${String(value ?? '').replaceAll('"', '""')}"`;
+  const escape = (value: unknown) => {
+    const serialized =
+      value === null || value === undefined
+        ? ''
+        : typeof value === 'object'
+          ? JSON.stringify(value)
+          : String(value);
+    return `"${serialized.replaceAll('"', '""')}"`;
+  };
   return [
     columns.join(','),
     ...rows.map((row) =>
