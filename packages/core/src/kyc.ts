@@ -132,7 +132,7 @@ export async function createKycCase(
   input: CreateKycInput,
 ): Promise<string> {
   const id = crypto.randomUUID();
-  await client.query(
+  const insertResult = await client.query(
     `INSERT INTO kyc_cases
       (id, customer_id, submitted_by, risk_level, notes, state, idempotency_key)
      VALUES ($1, $2, $3, $4, $5, 'pending_review', $6)
@@ -146,6 +146,25 @@ export async function createKycCase(
       input.idempotencyKey,
     ],
   );
+
+  if (insertResult.rowCount && insertResult.rowCount > 0) {
+    const docs: { docType: KycDocument['docType']; path: string }[] = [
+      { docType: 'id_front', path: '/id-front.svg' },
+      { docType: 'id_back', path: '/id-back.svg' },
+      { docType: 'proof_of_address', path: '/proof-of-address.svg' },
+      { docType: 'selfie', path: '/selfie.svg' },
+    ];
+    for (const doc of docs) {
+      await client.query(
+        `INSERT INTO kyc_documents
+          (id, kyc_case_id, doc_type, mock_image_path)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (id) DO NOTHING`,
+        [crypto.randomUUID(), id, doc.docType, doc.path],
+      );
+    }
+  }
+
   const existing = (
     await client.query('SELECT id FROM kyc_cases WHERE idempotency_key = $1', [
       input.idempotencyKey,

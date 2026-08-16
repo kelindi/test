@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 
@@ -7,7 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Textarea } from '@/components/ui/textarea';
 import { actorFromSession } from '@/lib/auth';
 import { auth } from '../../../../auth';
-import { can, readKycCase } from '@internal/core';
+import { can, queryAudit, readKycCase } from '@internal/core';
 import { approveKyc, rejectKyc, requestInfoKyc, submitKyc } from '../actions';
 
 const checklist = [
@@ -29,8 +30,17 @@ export default async function KycDetailPage({
   if (!actor) redirect('/login');
 
   const { id } = await params;
-  const kyc = await readKycCase(actor, id);
+  const traceId = crypto.randomUUID();
+  const kyc = await readKycCase(actor, id, traceId);
   if (!kyc) return <main>KYC case not found</main>;
+
+  let audit: any[] = [];
+  if (can(actor, 'audit:read')) {
+    audit = await queryAudit(actor, {
+      tableName: 'kyc_cases',
+      rowPk: id,
+    });
+  }
 
   const resource = { state: kyc.state, requesterId: kyc.submittedBy };
   const canApprove = can(actor, 'kyc:approve', resource);
@@ -115,6 +125,28 @@ export default async function KycDetailPage({
           </div>
         </CardContent>
       </Card>
+
+      {can(actor, 'audit:read') && (
+        <Card className="mt-6">
+          <CardHeader>
+            <CardTitle className="text-[13px] font-medium uppercase tracking-[0.02em] text-muted-foreground">
+              Audit history
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <ul className="space-y-3 text-sm">
+              {audit.map((entry: any) => (
+                <li key={`${entry.created_at}-${entry.id}`}>
+                  <span className="font-medium">{entry.operation}</span>{' '}
+                  <span className="text-muted-foreground">
+                    by {entry.actor_id} at {entry.created_at.toISOString()}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </CardContent>
+        </Card>
+      )}
 
       {(canApprove || canReject || canRequestInfo || canSubmit) && (
         <div className="mt-6">
