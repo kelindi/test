@@ -22,6 +22,7 @@ export default async function FeatureFlagsPage() {
 
   const actor = actorFromSession(session);
   if (!actor) redirect('/login');
+  if (!can(actor, 'flag:read')) redirect('/login');
 
   const rows = await flagList(actor);
   const canToggle = can(actor, 'flag:toggle');

@@ -20,6 +20,7 @@ export default async function FeatureFlagDetailPage({
   const { id } = await params;
   const actor = actorFromSession(session);
   if (!actor) redirect('/login');
+  if (!can(actor, 'flag:read')) redirect('/login');
 
   const flag = await readFlag(actor, id);
   if (!flag) return <main>Flag not found</main>;
@@ -88,9 +89,12 @@ export default async function FeatureFlagDetailPage({
             <ul className="space-y-3 text-sm">
               {audit.map((entry: any) => (
                 <li key={`${entry.created_at}-${entry.id}`}>
-                  <span className="font-medium">{entry.operation}</span>{' '}
+                  <span className="font-medium">{entry.operation}</span>
                   <span className="text-muted-foreground">
-                    by {entry.actor_id} at {entry.created_at.toISOString()}
+                    {' by '}
+                    {entry.actor_id}
+                    {' at '}
+                    {entry.created_at.toISOString()}
                   </span>
                 </li>
               ))}

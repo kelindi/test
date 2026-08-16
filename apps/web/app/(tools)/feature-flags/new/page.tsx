@@ -11,7 +11,8 @@ export default async function NewFlagPage() {
   if (!session?.user) redirect('/login');
 
   const actor = actorFromSession(session);
-  if (!actor || !can(actor, 'flag:create')) redirect('/feature-flags');
+  if (!actor || !can(actor, 'flag:read')) redirect('/login');
+  if (!can(actor, 'flag:create')) redirect('/feature-flags');
 
   return (
     <main className="mx-auto max-w-[1100px] px-6 py-10">
