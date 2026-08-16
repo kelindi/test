@@ -2,7 +2,12 @@
  * Authorization is a single policy boundary. A future policy engine can replace
  * this function without changing application call sites.
  */
-export type Role = 'support_agent' | 'finance_reviewer' | 'admin';
+export type Role =
+  | 'support_agent'
+  | 'finance_reviewer'
+  | 'admin'
+  | 'engineering_team'
+  | 'demo_admin';
 
 export type Actor = {
   id: string;
@@ -25,7 +30,10 @@ export type Action =
   | 'refund:cancel'
   | 'refund:abandon'
   | 'audit:read'
-  | 'audit:export';
+  | 'audit:export'
+  | 'flag:read'
+  | 'flag:toggle'
+  | 'flag:create';
 
 export type RefundResource = {
   state?: string;
@@ -72,6 +80,29 @@ const policyTable: Record<Role, Partial<Record<Action, PolicyValue>>> = {
     'refund:abandon': ['failed'],
     'audit:read': true,
     'audit:export': true,
+    'flag:read': true,
+    'flag:create': true,
+  },
+  engineering_team: {
+    'flag:read': true,
+    'flag:toggle': true,
+    'flag:create': true,
+  },
+  demo_admin: {
+    'customer:search': true,
+    'refund:create': true,
+    'refund:read': true,
+    'refund:approvals:read': true,
+    'refund:approve': true,
+    'refund:reject': true,
+    'refund:retry': true,
+    'refund:cancel': true,
+    'refund:abandon': true,
+    'audit:read': true,
+    'audit:export': true,
+    'flag:read': true,
+    'flag:toggle': true,
+    'flag:create': true,
   },
 };
 
@@ -99,6 +130,7 @@ export function can(
 
   const capability = policyTable[actor.role][action];
   if (!capability) return false;
+  if (actor.role === 'demo_admin') return true;
   const states = Array.isArray(capability)
     ? capability
     : capability === true

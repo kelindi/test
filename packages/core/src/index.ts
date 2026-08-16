@@ -2,6 +2,7 @@ export * from './actions';
 export * from './audit';
 export * from './authz';
 export * from './db';
+export * from './feature-flags';
 export * from './logger';
 export * from './money';
 export * from './refunds';

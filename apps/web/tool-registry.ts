@@ -16,6 +16,13 @@ export const toolRegistry: readonly ToolDefinition[] = [
     route: '/refunds',
     capability: 'refund:read',
   },
+  {
+    id: 'feature-flags',
+    name: 'Feature Flags',
+    description: 'List and toggle product feature flags.',
+    route: '/feature-flags',
+    capability: 'flag:read',
+  },
 ];
 
 export function availableTools(
