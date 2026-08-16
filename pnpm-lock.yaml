@@ -76,6 +76,8 @@ importers:
         specifier: 2.1.8
         version: 2.1.8(@types/node@22.10.2)
 
+  apps/web: {}
+
   packages/core: {}
 
   packages/ui: {}

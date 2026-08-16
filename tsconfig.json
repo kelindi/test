@@ -12,7 +12,8 @@
     "resolveJsonModule": true,
     "baseUrl": ".",
     "paths": {
-      "@internal/core": ["packages/core/src/index.ts"]
+      "@internal/core": ["packages/core/src/index.ts"],
+      "@/*": ["apps/web/*"]
     },
     "allowJs": true,
     "incremental": true,
@@ -23,13 +24,6 @@
       }
     ]
   },
-  "include": [
-    "app",
-    "auth.ts",
-    "next-env.d.ts",
-    "packages",
-    "types",
-    ".next/types/**/*.ts"
-  ],
+  "include": ["apps/web", "packages", "types", "apps/web/.next/types/**/*.ts"],
   "exclude": ["node_modules"]
 }

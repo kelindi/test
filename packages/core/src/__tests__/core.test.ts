@@ -156,7 +156,7 @@ describe('state machine and money', () => {
 
 describe('mechanical database guarantees', () => {
   it('does not allow app modules to import the raw client', () => {
-    const appDir = path.join(process.cwd(), 'app');
+    const appDir = path.join(process.cwd(), 'apps/web/app');
     const source = fs
       .readdirSync(appDir, { recursive: true })
       .filter(
