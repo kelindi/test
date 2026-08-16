@@ -9,19 +9,25 @@ import { RefundForm } from './refund-form';
 export default async function NewRefundPage({
   searchParams,
 }: {
-  searchParams: Promise<{ email?: string }>;
+  searchParams: Promise<{ email?: string; error?: string }>;
 }) {
   const session = await auth();
   if (!session?.user) redirect('/login');
 
   const params = await searchParams;
   const email = params.email?.trim() ?? '';
+  const error = params.error;
   const customer = email ? await searchCustomer(email) : null;
   const payments = customer ? await listCustomerPayments(customer.id) : [];
 
   return (
     <main className="mx-auto max-w-[1100px] px-6 py-10">
       <h1 className="text-xl font-semibold leading-7">Raise refund request</h1>
+      {error && (
+        <p className="mt-4 rounded-md border border-destructive bg-destructive/10 px-4 py-3 text-sm text-destructive">
+          {error}
+        </p>
+      )}
       <div className="mt-6 max-w-xl">
         <p className="mb-3 text-[13px] font-medium uppercase tracking-[0.02em] text-muted-foreground">
           1. Find customer

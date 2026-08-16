@@ -1,7 +1,12 @@
 import crypto from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 
-import { SYSTEM_ACTOR, verifyAuditChain, withActor } from '..';
+import {
+  queryRefundAudit,
+  SYSTEM_ACTOR,
+  verifyAuditChain,
+  withActor,
+} from '..';
 
 const runWithDatabase = describe.runIf(Boolean(process.env.DATABASE_URL));
 
@@ -272,6 +277,101 @@ runWithDatabase('auditor-facing audit completeness kit', () => {
       await client.query('DELETE FROM outbox WHERE dedupe_key = $1', [
         outboxKey,
       ]);
+      await client.query(
+        'DELETE FROM refund_approvals WHERE refund_request_id = $1',
+        [refundId],
+      );
+      await client.query('DELETE FROM refund_requests WHERE id = $1', [
+        refundId,
+      ]);
+    });
+  });
+
+  it('returns refund lifecycle audit with role-based visibility', async () => {
+    const suffix = crypto.randomUUID();
+    const refundId = `refund-audit-${suffix}`;
+    const support = {
+      id: 'user_support',
+      role: 'support_agent' as const,
+    };
+    const finance1 = {
+      id: 'user_finance_1',
+      role: 'finance_reviewer' as const,
+    };
+    const finance2 = {
+      id: 'user_finance_2',
+      role: 'finance_reviewer' as const,
+    };
+
+    await withActor(SYSTEM_ACTOR, async (client) => {
+      await client.query(
+        `INSERT INTO refund_requests
+          (id, customer_id, payment_id, payment_snapshot, requested_by,
+           amount_minor, currency, reason_code, notes, state, idempotency_key)
+         VALUES ($1, 'customer_1', 'payment_1', '{}', 'user_support',
+                 1000, 'USD', 'customer_request', 'please refund',
+                 'pending_approval', $2)`,
+        [refundId, `refund-key-${suffix}`],
+      );
+      await client.query(
+        `INSERT INTO refund_approvals
+          (refund_request_id, approver_id, decision, reason_code, comment)
+         VALUES ($1, 'user_finance_1', 'approved', 'customer_request', 'ok')`,
+        [refundId],
+      );
+      await client.query(
+        `INSERT INTO ledger_entries
+          (refund_request_id, payment_id, amount_minor, currency, direction)
+         VALUES ($1, 'payment_1', 1000, 'USD', 'debit')`,
+        [refundId],
+      );
+      await client.query(
+        `INSERT INTO provider_calls
+          (refund_request_id, idempotency_key, request_payload, status)
+         VALUES ($1, $2, '{}', 'succeeded')`,
+        [refundId, `provider-${suffix}`],
+      );
+      await client.query(
+        "UPDATE refund_requests SET state = 'succeeded' WHERE id = $1",
+        [refundId],
+      );
+    });
+
+    await expect(queryRefundAudit(support, refundId)).rejects.toThrow(
+      'Not authorized',
+    );
+
+    const finance2Rows = await queryRefundAudit(finance2, refundId);
+    expect(finance2Rows).toHaveLength(0);
+
+    const adminRows = await queryRefundAudit(SYSTEM_ACTOR, refundId);
+    expect(adminRows).toHaveLength(5);
+    expect(
+      adminRows.map((row: { table_name: string }) => row.table_name),
+    ).toEqual(
+      expect.arrayContaining([
+        'ledger_entries',
+        'provider_calls',
+        'refund_approvals',
+        'refund_requests',
+      ]),
+    );
+
+    const finance1Rows = await queryRefundAudit(finance1, refundId);
+    expect(finance1Rows).toHaveLength(3);
+    expect(
+      finance1Rows.map((row: { table_name: string }) => row.table_name),
+    ).toEqual(expect.arrayContaining(['refund_approvals', 'refund_requests']));
+
+    await withActor(SYSTEM_ACTOR, async (client) => {
+      await client.query(
+        'DELETE FROM provider_calls WHERE refund_request_id = $1',
+        [refundId],
+      );
+      await client.query(
+        'DELETE FROM ledger_entries WHERE refund_request_id = $1',
+        [refundId],
+      );
       await client.query(
         'DELETE FROM refund_approvals WHERE refund_request_id = $1',
         [refundId],

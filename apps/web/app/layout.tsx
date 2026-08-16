@@ -1,3 +1,5 @@
+export const dynamic = 'force-dynamic';
+
 import './globals.css';
 
 import { AppHeader } from '@/components/app-header';

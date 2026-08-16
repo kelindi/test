@@ -1,3 +1,5 @@
+import 'dotenv/config';
+
 import { afterEach } from 'vitest';
 
 const configuredUrl = process.env.DATABASE_TEST_URL ?? process.env.DATABASE_URL;

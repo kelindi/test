@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Textarea } from '@/components/ui/textarea';
+import { describeAudit, describeAuditWhen } from '@/lib/audit-format';
 import { actorFromSession } from '@/lib/auth';
 import { formatMoney } from '@/lib/format';
 import {
@@ -13,7 +14,7 @@ import {
   can,
   FakeStripeProvider,
   logAccess,
-  queryAudit,
+  queryRefundAudit,
   readAs,
   refundableBalance,
   SeededPaymentsClient,
@@ -23,12 +24,15 @@ import { auth } from '../../../../auth';
 
 export default async function RefundDetailPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ error?: string }>;
 }) {
   const session = await auth();
   if (!session?.user) redirect('/login');
   const { id } = await params;
+  const { error } = await searchParams;
   const actor = actorFromSession(session);
   if (!actor) redirect('/login');
   const refund = await readAs(
@@ -45,10 +49,7 @@ export default async function RefundDetailPage({
   });
   let audit: any[] = [];
   if (can(actor, 'audit:read')) {
-    audit = await queryAudit(actor, {
-      tableName: 'refund_requests',
-      rowPk: id,
-    });
+    audit = await queryRefundAudit(actor, id);
   }
   const payment = await readAs(actor, async (client) => {
     const payments = new SeededPaymentsClient(client, new FakeStripeProvider());
@@ -77,6 +78,11 @@ export default async function RefundDetailPage({
   return (
     <main className="mx-auto max-w-[1100px] px-6 py-10">
       <h1 className="text-xl font-semibold leading-7">Refund request</h1>
+      {error && (
+        <p className="mt-4 rounded-md border border-destructive bg-destructive/10 px-4 py-3 text-sm text-destructive">
+          {error}
+        </p>
+      )}
       <div className="mt-6 grid gap-6 md:grid-cols-2">
         <Card>
           <CardHeader>
@@ -120,17 +126,17 @@ export default async function RefundDetailPage({
         <Card>
           <CardHeader>
             <CardTitle className="text-[13px] font-medium uppercase tracking-[0.02em] text-muted-foreground">
-              Approval history
+              Audit history
             </CardTitle>
           </CardHeader>
           <CardContent>
             <ul className="space-y-3 text-sm">
               {audit.map((entry: any) => (
                 <li key={`${entry.created_at}-${entry.id}`}>
-                  <span className="font-medium">{entry.operation}</span>{' '}
                   <span className="text-muted-foreground">
-                    by {entry.actor_id} at {entry.created_at.toISOString()}
-                  </span>
+                    {describeAuditWhen(entry)}
+                  </span>{' '}
+                  {describeAudit(entry)}
                 </li>
               ))}
             </ul>
