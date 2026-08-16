@@ -38,7 +38,9 @@ export class StateMachine<State extends string> {
       throw new Error('Transition is not permitted');
     }
     if (action.includes(':') && !can(actor, action as Action, resource)) {
-      const requester = (resource.requestedBy ?? resource.requesterId) as string | undefined;
+      const requester = (resource.requestedBy ?? resource.requesterId) as
+        | string
+        | undefined;
       const approvals = (resource.approvalActorIds ?? []) as string[];
       if (
         (action === 'refund:approve' || action === 'refund:reject') &&

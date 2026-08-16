@@ -119,6 +119,19 @@ if (process.env.DATABASE_URL) {
         DELETE FROM users
         WHERE id LIKE 'audit-user-%'
       `);
+      await client.query(`
+        UPDATE payments
+        SET refunded_minor = CASE id
+          WHEN 'payment_1' THEN 50000
+          WHEN 'payment_2' THEN 0
+          WHEN 'payment_3' THEN 1000
+          WHEN 'payment_4' THEN 0
+          WHEN 'payment_5' THEN 25000
+          WHEN 'payment_6' THEN 0
+          WHEN 'payment_7' THEN 5000
+        END
+        WHERE id LIKE 'payment_%'
+      `);
     });
   });
 }

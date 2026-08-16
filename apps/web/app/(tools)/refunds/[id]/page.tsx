@@ -10,6 +10,7 @@ import { actorFromSession } from '@/lib/auth';
 import { formatMoney } from '@/lib/format';
 import {
   auditEvent,
+  can,
   FakeStripeProvider,
   logAccess,
   queryAudit,
@@ -42,10 +43,13 @@ export default async function RefundDetailPage({
     await logAccess(client, actor, 'refund_request', id, traceId);
     await auditEvent(client, 'refund.read', actor, { refundId: id }, traceId);
   });
-  const audit = await queryAudit(actor, {
-    tableName: 'refund_requests',
-    rowPk: id,
-  });
+  let audit: any[] = [];
+  if (can(actor, 'audit:read')) {
+    audit = await queryAudit(actor, {
+      tableName: 'refund_requests',
+      rowPk: id,
+    });
+  }
   const payment = await readAs(actor, async (client) => {
     const payments = new SeededPaymentsClient(client, new FakeStripeProvider());
     const selected = await payments.getPayment(refund.payment_id);

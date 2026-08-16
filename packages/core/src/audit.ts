@@ -10,9 +10,7 @@ export type AuditFilter = {
 };
 
 export async function queryAudit(actor: Actor, filter: AuditFilter = {}) {
-  const ownDecision =
-    actor.role === 'finance_reviewer' ? [actor.id] : undefined;
-  if (!can(actor, 'audit:read', { approvalActorIds: ownDecision })) {
+  if (!can(actor, 'audit:read')) {
     throw new Error('Not authorized');
   }
   const conditions: string[] = [];

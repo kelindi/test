@@ -1,29 +1,36 @@
-import { signIn } from '../../auth';
-import { redirect } from 'next/navigation';
+'use client';
+
+import { useState } from 'react';
+import { useSearchParams } from 'next/navigation';
+import { signIn } from 'next-auth/react';
+
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 
-export default async function LoginPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ error?: string }>;
-}) {
-  const { error } = await searchParams;
-  async function login(formData: FormData) {
-    'use server';
-    try {
-      const result = (await signIn('credentials', {
-        email: String(formData.get('email')),
-        password: String(formData.get('password')),
-        redirect: false,
-      })) as { error?: string } | undefined;
-      if (result?.error) redirect('/login?error=1');
-    } catch {
-      redirect('/login?error=1');
+export default function LoginPage() {
+  const searchParams = useSearchParams();
+  const urlError = searchParams.get('error');
+  const [error, setError] = useState(urlError);
+  const [pending, setPending] = useState(false);
+
+  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setPending(true);
+    const formData = new FormData(event.currentTarget);
+    const result = await signIn('credentials', {
+      email: String(formData.get('email')),
+      password: String(formData.get('password')),
+      redirect: false,
+      callbackUrl: '/',
+    });
+    setPending(false);
+    if (result?.error) {
+      setError(result.error);
+      return;
     }
-    redirect('/refunds');
+    window.location.href = result?.url || '/';
   }
 
   return (
@@ -33,7 +40,7 @@ export default async function LoginPage({
           <CardTitle>Sign in</CardTitle>
         </CardHeader>
         <CardContent>
-          <form action={login} className="space-y-4">
+          <form onSubmit={handleSubmit} className="space-y-4">
             <div className="space-y-2">
               <Label htmlFor="email">Email</Label>
               <Input id="email" name="email" type="email" required />
@@ -42,7 +49,7 @@ export default async function LoginPage({
               <Label htmlFor="password">Password</Label>
               <Input id="password" name="password" type="password" required />
             </div>
-            <Button type="submit" className="w-full">
+            <Button type="submit" className="w-full" disabled={pending}>
               Sign in
             </Button>
           </form>

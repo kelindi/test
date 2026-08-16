@@ -43,6 +43,7 @@ export function RefundForm({
 }) {
   const [paymentId, setPaymentId] = useState(payments[0]?.id ?? '');
   const [reason, setReason] = useState('customer_request');
+  const [idempotencyKey] = useState(() => crypto.randomUUID());
   const selectedPayment = payments.find((payment) => payment.id === paymentId);
 
   return (
@@ -50,6 +51,7 @@ export function RefundForm({
       <input type="hidden" name="customerId" value={customerId} />
       <input type="hidden" name="paymentId" value={paymentId} />
       <input type="hidden" name="source" value="manual" />
+      <input type="hidden" name="idempotencyKey" value={idempotencyKey} />
       <div>
         <p className="mb-3 text-[13px] font-medium uppercase tracking-[0.02em] text-muted-foreground">
           2. Select charge

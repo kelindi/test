@@ -113,8 +113,11 @@ export function can(
   if (action === 'refund:approve' || action === 'refund:reject') {
     return requester !== actor.id && !approvals.includes(actor.id);
   }
-  if (action === 'audit:read' && actor.role === 'finance_reviewer') {
-    return approvals.includes(actor.id);
+  if (typeof capability === 'object' && 'condition' in capability) {
+    if (capability.condition === 'own_decision') {
+      if (resource.approvalActorIds === undefined) return true;
+      return approvals.includes(actor.id);
+    }
   }
   return true;
 }
