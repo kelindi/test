@@ -23,6 +23,7 @@ describe('portal access', () => {
       ['support@example.com', 'support-password', 'support_agent'],
       ['finance1@example.com', 'finance-password', 'finance_reviewer'],
       ['finance2@example.com', 'finance-two-password', 'finance_reviewer'],
+      ['kyc@example.com', 'kyc-password', 'kyc_reviewer'],
       ['admin@example.com', 'admin-password', 'admin'],
       ['eng@example.com', 'engineering-password', 'engineering_team'],
       ['demo@example.com', 'demo-password', 'demo_admin'],
@@ -63,8 +64,6 @@ describe('portal access', () => {
         can({ id: 'user_support', role: 'support_agent' }, tool.capability),
       ).toBe(true);
     }
-    expect(supportTools).toEqual(
-      toolRegistry.filter((tool) => tool.id === 'refunds'),
-    );
+    expect(supportTools).toEqual(expectedToolsFor('support_agent'));
   });
 });

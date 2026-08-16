@@ -11,8 +11,8 @@ const owner = new pg.Client({
 await owner.connect();
 await owner.query(`
   DROP TABLE IF EXISTS access_log, provider_calls, outbox, ledger_entries, ledger,
-    refund_approvals, refund_requests, payments, customers, users,
-    sensitive_columns, audit_log, application_audit_events, feature_flags CASCADE;
+    kyc_documents, kyc_cases, refund_approvals, refund_requests, payments, customers,
+    users, sensitive_columns, audit_log, application_audit_events, feature_flags CASCADE;
   DROP FUNCTION IF EXISTS create_monthly_audit_partitions(date);
   DROP FUNCTION IF EXISTS install_audit_trigger(text);
   DROP FUNCTION IF EXISTS audit_row() CASCADE;
@@ -28,6 +28,8 @@ await owner.query(`
   DROP TYPE IF EXISTS refund_state CASCADE;
   DROP TYPE IF EXISTS refund_reason_code CASCADE;
   DROP TYPE IF EXISTS refund_source CASCADE;
+  DROP TYPE IF EXISTS kyc_document_type CASCADE;
+  DROP TYPE IF EXISTS kyc_state CASCADE;
 `);
 await owner.query(
   fs.readFileSync(path.join(process.cwd(), 'drizzle/0000_initial.sql'), 'utf8'),
@@ -48,13 +50,15 @@ await owner.query(
    ('user_support', 'support@example.com', 'Support Agent', $1, 'support_agent'),
    ('user_finance_1', 'finance1@example.com', 'Finance Reviewer One', $2, 'finance_reviewer'),
    ('user_finance_2', 'finance2@example.com', 'Finance Reviewer Two', $3, 'finance_reviewer'),
-   ('user_admin', 'admin@example.com', 'Administrator', $4, 'admin'),
-   ('user_engineering', 'eng@example.com', 'Engineering Team', $5, 'engineering_team'),
-   ('user_demo', 'demo@example.com', 'Demo Admin', $6, 'demo_admin')`,
+   ('user_kyc', 'kyc@example.com', 'KYC Reviewer', $4, 'kyc_reviewer'),
+   ('user_admin', 'admin@example.com', 'Administrator', $5, 'admin'),
+   ('user_engineering', 'eng@example.com', 'Engineering Team', $6, 'engineering_team'),
+   ('user_demo', 'demo@example.com', 'Demo Admin', $7, 'demo_admin')`,
   [
     hashPassword('support-password'),
     hashPassword('finance-password'),
     hashPassword('finance-two-password'),
+    hashPassword('kyc-password'),
     hashPassword('admin-password'),
     hashPassword('engineering-password'),
     hashPassword('demo-password'),
@@ -79,6 +83,28 @@ await owner.query(
      ('payment_5', 'customer_2', 'ch_demo_5', 75000, 25000, 'USD', now() - interval '8 days', 'captured'),
      ('payment_6', 'customer_3', 'ch_demo_6', 12000, 0, 'USD', now() - interval '6 days', 'captured'),
      ('payment_7', 'customer_3', 'ch_demo_7', 43000, 5000, 'USD', now() - interval '3 days', 'captured')`,
+);
+
+await owner.query(
+  `INSERT INTO kyc_cases
+    (id, customer_id, submitted_by, state, risk_level, notes, idempotency_key)
+   VALUES
+     ('kyc_1', 'customer_1', 'user_support', 'pending_review', 'medium',
+      'Submitted for initial review', 'kyc-key-1'),
+     ('kyc_2', 'customer_2', 'user_support', 'needs_more_info', 'high',
+      'Address proof is blurry', 'kyc-key-2')`,
+);
+
+await owner.query(
+  `INSERT INTO kyc_documents
+    (id, kyc_case_id, doc_type, mock_image_path)
+   VALUES
+     ('doc_1', 'kyc_1', 'id_front', '/id-front.svg'),
+     ('doc_2', 'kyc_1', 'id_back', '/id-back.svg'),
+     ('doc_3', 'kyc_1', 'proof_of_address', '/proof-of-address.svg'),
+     ('doc_4', 'kyc_1', 'selfie', '/selfie.svg'),
+     ('doc_5', 'kyc_2', 'id_front', '/id-front.svg'),
+     ('doc_6', 'kyc_2', 'proof_of_address', '/proof-of-address.svg')`,
 );
 
 await owner.query(

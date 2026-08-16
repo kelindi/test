@@ -4,6 +4,7 @@ import type { Session } from 'next-auth';
 const roles: readonly Role[] = [
   'support_agent',
   'finance_reviewer',
+  'kyc_reviewer',
   'admin',
   'engineering_team',
   'demo_admin',

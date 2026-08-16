@@ -5,5 +5,6 @@ export * from './db';
 export * from './feature-flags';
 export * from './logger';
 export * from './money';
+export * from './kyc';
 export * from './refunds';
 export * from './state-machine';
