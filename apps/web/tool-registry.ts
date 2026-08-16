@@ -16,6 +16,13 @@ export const toolRegistry: readonly ToolDefinition[] = [
     route: '/refunds',
     capability: 'refund:read',
   },
+  {
+    id: 'kyc',
+    name: 'KYC review',
+    description: 'Review customer identity verification cases.',
+    route: '/kyc',
+    capability: 'kyc:read',
+  },
 ];
 
 export function availableTools(

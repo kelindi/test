@@ -120,6 +120,15 @@ if (process.env.DATABASE_URL) {
         WHERE id LIKE 'audit-user-%'
       `);
       await client.query(`
+        DELETE FROM kyc_documents
+        WHERE kyc_case_id IN (
+          SELECT id FROM kyc_cases WHERE idempotency_key LIKE 'kyc-%'
+        )
+      `);
+      await client.query(`
+        DELETE FROM kyc_cases WHERE idempotency_key LIKE 'kyc-%'
+      `);
+      await client.query(`
         UPDATE payments
         SET refunded_minor = CASE id
           WHEN 'payment_1' THEN 50000

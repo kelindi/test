@@ -22,8 +22,12 @@ import {
   money,
   parseMoney,
   queryAudit,
+  readKycCase,
   refundableBalance,
   reviewerQueue,
+  createKycCase,
+  decideKycCase,
+  kycQueue,
   StateMachine,
   verifyAuditChain,
   verifyApplicationAuditChain,
@@ -34,9 +38,15 @@ import { log } from '../logger';
 const support = { id: 'user_support', role: 'support_agent' as const };
 const reviewerOne = { id: 'user_finance_1', role: 'finance_reviewer' as const };
 const reviewerTwo = { id: 'user_finance_2', role: 'finance_reviewer' as const };
+const kycReviewer = { id: 'user_kyc', role: 'kyc_reviewer' as const };
 
 describe('authorization matrix', () => {
-  const roles = ['support_agent', 'finance_reviewer', 'admin'] as const;
+  const roles = [
+    'support_agent',
+    'finance_reviewer',
+    'kyc_reviewer',
+    'admin',
+  ] as const;
   const actions = [
     'customer:search',
     'refund:create',
@@ -49,6 +59,12 @@ describe('authorization matrix', () => {
     'refund:abandon',
     'audit:read',
     'audit:export',
+    'kyc:read',
+    'kyc:create',
+    'kyc:submit',
+    'kyc:approve',
+    'kyc:reject',
+    'kyc:request_info',
   ] as const;
   const states = ['pending_approval', 'failed'] as const;
 
@@ -56,26 +72,38 @@ describe('authorization matrix', () => {
     for (const role of roles) {
       for (const action of actions) {
         for (const state of states) {
-          const actor = {
-            id: role,
-            role,
-          };
-          const expected =
-            action === 'customer:search' ||
+          const actor = { id: role, role };
+          let expected = false;
+          if (action === 'customer:search') {
+            expected = true;
+          } else if (
             action === 'refund:read' ||
             action === 'refund:approvals:read'
-              ? true
-              : role === 'support_agent'
-                ? action === 'refund:create' ||
-                  (action === 'refund:cancel' && state === 'pending_approval')
-                : role === 'finance_reviewer'
-                  ? action === 'refund:approve' || action === 'refund:reject'
-                    ? state === 'pending_approval'
-                    : action === 'refund:retry' && state === 'failed'
-                  : action === 'audit:read' ||
-                    action === 'audit:export' ||
-                    (action === 'refund:retry' && state === 'failed') ||
-                    (action === 'refund:abandon' && state === 'failed');
+          ) {
+            expected = role !== 'kyc_reviewer';
+          } else if (action === 'kyc:read') {
+            expected = role !== 'finance_reviewer';
+          } else if (action === 'refund:create') {
+            expected = role === 'support_agent';
+          } else if (action === 'kyc:create') {
+            expected = role === 'support_agent';
+          } else if (action === 'refund:cancel') {
+            expected = role === 'support_agent' && state === 'pending_approval';
+          } else if (
+            action === 'refund:approve' ||
+            action === 'refund:reject'
+          ) {
+            expected =
+              role === 'finance_reviewer' && state === 'pending_approval';
+          } else if (action === 'refund:retry') {
+            expected =
+              (role === 'finance_reviewer' || role === 'admin') &&
+              state === 'failed';
+          } else if (action === 'refund:abandon') {
+            expected = role === 'admin' && state === 'failed';
+          } else if (action === 'audit:read' || action === 'audit:export') {
+            expected = role === 'admin';
+          }
           expect(
             can(actor, action, {
               state,
@@ -107,6 +135,60 @@ describe('authorization matrix', () => {
       action: 'audit:read',
       condition: 'own_decision',
     });
+    expect(
+      capabilityMatrix().find(
+        (entry) =>
+          entry.role === 'kyc_reviewer' && entry.action === 'kyc:approve',
+      ),
+    ).toEqual({
+      role: 'kyc_reviewer',
+      action: 'kyc:approve',
+      states: ['pending_review'],
+    });
+  });
+
+  it('states the KYC role x action x state matrix', () => {
+    const kycStates = [
+      'pending_review',
+      'needs_more_info',
+      'approved',
+      'rejected',
+    ] as const;
+    for (const state of kycStates) {
+      expect(
+        can(support, 'kyc:create', { state, requesterId: 'someone' }),
+      ).toBe(true);
+      expect(
+        can(kycReviewer, 'kyc:approve', {
+          state,
+          requesterId: support.id,
+        }),
+      ).toBe(state === 'pending_review');
+      expect(
+        can(kycReviewer, 'kyc:reject', {
+          state,
+          requesterId: support.id,
+        }),
+      ).toBe(state === 'pending_review');
+      expect(
+        can(kycReviewer, 'kyc:request_info', {
+          state,
+          requesterId: support.id,
+        }),
+      ).toBe(state === 'pending_review');
+      expect(
+        can(support, 'kyc:submit', {
+          state,
+          requesterId: support.id,
+        }),
+      ).toBe(state === 'needs_more_info');
+    }
+    expect(
+      can(kycReviewer, 'kyc:approve', {
+        state: 'pending_review',
+        requesterId: kycReviewer.id,
+      }),
+    ).toBe(false);
   });
 });
 
@@ -204,6 +286,7 @@ describe.runIf(Boolean(process.env.DATABASE_URL))(
         ['support@example.com', 'support-password', 'support_agent'],
         ['finance1@example.com', 'finance-password', 'finance_reviewer'],
         ['finance2@example.com', 'finance-two-password', 'finance_reviewer'],
+        ['kyc@example.com', 'kyc-password', 'kyc_reviewer'],
         ['admin@example.com', 'admin-password', 'admin'],
       ] as const;
       for (const [email, password, role] of accounts) {
@@ -250,6 +333,16 @@ describe.runIf(Boolean(process.env.DATABASE_URL))(
       expect(rows).toContainEqual({
         table_name: 'customers',
         column_name: 'email',
+        redact_in_audit: true,
+      });
+      expect(rows).toContainEqual({
+        table_name: 'kyc_cases',
+        column_name: 'notes',
+        redact_in_audit: false,
+      });
+      expect(rows).toContainEqual({
+        table_name: 'kyc_documents',
+        column_name: 'mock_image_path',
         redact_in_audit: true,
       });
     });
@@ -951,6 +1044,51 @@ describe.runIf(Boolean(process.env.DATABASE_URL))(
           ).rows,
       );
       expect(rows).toHaveLength(0);
+    });
+
+    it('enforces RLS for KYC rows at the database layer', async () => {
+      const othersRows = await withActor(
+        support,
+        async (client) =>
+          (
+            await client.query(
+              `SELECT id FROM kyc_cases WHERE submitted_by <> $1`,
+              [support.id],
+            )
+          ).rows,
+      );
+      expect(othersRows).toHaveLength(0);
+    });
+
+    it('runs the KYC lifecycle and enforces two-actor segregation of duties', async () => {
+      const suffix = Date.now().toString();
+
+      const kycId = await withActor(support, (client) =>
+        createKycCase(client, {
+          idempotencyKey: `kyc-${suffix}`,
+          customerId: 'customer_1',
+          submittedBy: support.id,
+          riskLevel: 'high',
+          notes: 'test notes',
+        }),
+      );
+
+      // submitter cannot approve
+      await expect(
+        withActor(support, (client) =>
+          decideKycCase(client, support, kycId, 'kyc:approve', null),
+        ),
+      ).rejects.toThrow(/segregation|different actor/i);
+
+      // reviewer approves
+      const approvedState = await withActor(kycReviewer, (client) =>
+        decideKycCase(client, kycReviewer, kycId, 'kyc:approve', null),
+      );
+      expect(approvedState).toBe('approved');
+
+      const detail = await readKycCase(kycReviewer, kycId);
+      expect(detail?.state).toBe('approved');
+      expect(detail?.customerId).toBe('customer_1');
     });
 
     it('detects a tampered audit row', async () => {

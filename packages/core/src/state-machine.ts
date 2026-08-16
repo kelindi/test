@@ -43,7 +43,10 @@ export class StateMachine<State extends string> {
         | undefined;
       const approvals = (resource.approvalActorIds ?? []) as string[];
       if (
-        (action === 'refund:approve' || action === 'refund:reject') &&
+        (action === 'refund:approve' ||
+          action === 'refund:reject' ||
+          action === 'kyc:approve' ||
+          action === 'kyc:reject') &&
         (requester === actor.id || approvals.includes(actor.id))
       ) {
         throw new Error('Segregation of duties violation');
@@ -65,6 +68,35 @@ export class StateMachine<State extends string> {
     return nextState;
   }
 }
+
+export const kycTransitions: Transition<string>[] = [
+  {
+    from: 'pending_review',
+    to: 'approved',
+    action: 'kyc:approve',
+    guard: () => true,
+    requiresDifferentActorFrom: 'kyc:create',
+  },
+  {
+    from: 'pending_review',
+    to: 'rejected',
+    action: 'kyc:reject',
+    guard: () => true,
+    requiresDifferentActorFrom: 'kyc:create',
+  },
+  {
+    from: 'pending_review',
+    to: 'needs_more_info',
+    action: 'kyc:request_info',
+    guard: () => true,
+  },
+  {
+    from: 'needs_more_info',
+    to: 'pending_review',
+    action: 'kyc:submit',
+    guard: () => true,
+  },
+];
 
 export const refundTransitions: Transition<string>[] = [
   {

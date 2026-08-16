@@ -6,13 +6,17 @@ CREATE TYPE refund_state AS ENUM
   ('pending_approval', 'approved', 'executing', 'succeeded', 'failed', 'rejected', 'cancelled');
 CREATE TYPE approval_decision AS ENUM ('approved', 'rejected');
 CREATE TYPE refund_source AS ENUM ('manual', 'ticket', 'api');
+CREATE TYPE kyc_document_type AS ENUM
+  ('id_front', 'id_back', 'proof_of_address', 'selfie');
+CREATE TYPE kyc_state AS ENUM
+  ('pending_review', 'approved', 'rejected', 'needs_more_info');
 
 CREATE TABLE users (
   id text PRIMARY KEY,
   email text NOT NULL UNIQUE,
   name text NOT NULL,
   password_hash text NOT NULL,
-  role text NOT NULL CHECK (role IN ('support_agent', 'finance_reviewer', 'admin')),
+  role text NOT NULL CHECK (role IN ('support_agent', 'finance_reviewer', 'kyc_reviewer', 'admin')),
   is_active boolean NOT NULL DEFAULT true,
   created_at timestamptz NOT NULL DEFAULT now()
 );
@@ -108,6 +112,26 @@ $$;
 CREATE TRIGGER payment_refund_invariants
 AFTER UPDATE OF amount_minor, currency ON payments
 FOR EACH ROW EXECUTE FUNCTION validate_payment_refunds();
+
+CREATE TABLE kyc_cases (
+  id text PRIMARY KEY,
+  customer_id text NOT NULL REFERENCES customers(id),
+  submitted_by text NOT NULL REFERENCES users(id),
+  state kyc_state NOT NULL,
+  risk_level text NOT NULL,
+  notes text,
+  idempotency_key text NOT NULL UNIQUE,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE kyc_documents (
+  id text PRIMARY KEY,
+  kyc_case_id text NOT NULL REFERENCES kyc_cases(id),
+  doc_type kyc_document_type NOT NULL,
+  mock_image_path text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
 
 CREATE TABLE refund_approvals (
   id serial PRIMARY KEY,
@@ -230,7 +254,9 @@ INSERT INTO sensitive_columns VALUES
   ('customers', 'name', true),
   ('customers', 'email', true),
   ('refund_requests', 'notes', false),
-  ('refund_approvals', 'comment', false);
+  ('refund_approvals', 'comment', false),
+  ('kyc_cases', 'notes', false),
+  ('kyc_documents', 'mock_image_path', true);
 
 CREATE OR REPLACE FUNCTION create_monthly_audit_partitions(month_start date)
 RETURNS void LANGUAGE plpgsql AS $$
@@ -380,6 +406,8 @@ SELECT install_audit_trigger('customers');
 SELECT install_audit_trigger('payments');
 SELECT install_audit_trigger('refund_requests');
 SELECT install_audit_trigger('refund_approvals');
+SELECT install_audit_trigger('kyc_cases');
+SELECT install_audit_trigger('kyc_documents');
 SELECT install_audit_trigger('ledger_entries');
 SELECT install_audit_trigger('outbox');
 SELECT install_audit_trigger('provider_calls');
@@ -402,6 +430,10 @@ ALTER TABLE refund_requests ENABLE ROW LEVEL SECURITY;
 ALTER TABLE refund_requests FORCE ROW LEVEL SECURITY;
 ALTER TABLE refund_approvals ENABLE ROW LEVEL SECURITY;
 ALTER TABLE refund_approvals FORCE ROW LEVEL SECURITY;
+ALTER TABLE kyc_cases ENABLE ROW LEVEL SECURITY;
+ALTER TABLE kyc_cases FORCE ROW LEVEL SECURITY;
+ALTER TABLE kyc_documents ENABLE ROW LEVEL SECURITY;
+ALTER TABLE kyc_documents FORCE ROW LEVEL SECURITY;
 ALTER TABLE ledger_entries ENABLE ROW LEVEL SECURITY;
 ALTER TABLE ledger_entries FORCE ROW LEVEL SECURITY;
 ALTER TABLE outbox ENABLE ROW LEVEL SECURITY;
@@ -418,7 +450,7 @@ ALTER TABLE application_audit_events FORCE ROW LEVEL SECURITY;
 CREATE POLICY users_admin ON users
   USING (current_setting('app.current_actor_role', true) = 'admin');
 CREATE POLICY customers_all_roles ON customers
-  USING (current_setting('app.current_actor_role', true) IN ('support_agent', 'finance_reviewer', 'admin'));
+  USING (current_setting('app.current_actor_role', true) IN ('support_agent', 'finance_reviewer', 'kyc_reviewer', 'admin'));
 CREATE POLICY payments_all_roles ON payments
   USING (current_setting('app.current_actor_role', true) IN ('support_agent', 'finance_reviewer', 'admin'));
 CREATE POLICY payments_owner_invariants ON payments
@@ -431,6 +463,16 @@ CREATE POLICY refunds_owner_invariants ON refund_requests
   USING (true);
 CREATE POLICY approvals_finance ON refund_approvals
   USING (current_setting('app.current_actor_role', true) IN ('support_agent', 'finance_reviewer', 'admin'));
+CREATE POLICY kyc_all_roles ON kyc_cases
+  USING (current_setting('app.current_actor_role', true) IN ('support_agent', 'kyc_reviewer', 'admin'));
+CREATE POLICY kyc_documents_all_roles ON kyc_documents
+  USING (current_setting('app.current_actor_role', true) IN ('support_agent', 'kyc_reviewer', 'admin'));
+CREATE POLICY kyc_owner_invariants ON kyc_cases
+  FOR SELECT TO devin_powerapps_owner
+  USING (true);
+CREATE POLICY kyc_documents_owner_invariants ON kyc_documents
+  FOR SELECT TO devin_powerapps_owner
+  USING (true);
 CREATE POLICY ledger_finance ON ledger_entries
   USING (current_setting('app.current_actor_role', true) IN ('finance_reviewer', 'admin'));
 CREATE POLICY outbox_admin ON outbox
@@ -487,7 +529,7 @@ CREATE POLICY application_audit_events_admin_read ON application_audit_events
   USING (current_setting('app.current_actor_role', true) = 'admin');
 
 GRANT SELECT, INSERT, UPDATE, DELETE ON users, customers, payments, refund_requests,
-  refund_approvals, ledger_entries, provider_calls TO devin_powerapps_app;
+  refund_approvals, kyc_cases, kyc_documents, ledger_entries, provider_calls TO devin_powerapps_app;
 GRANT SELECT, UPDATE, DELETE ON outbox TO devin_powerapps_app;
 REVOKE INSERT ON outbox FROM devin_powerapps_app;
 GRANT EXECUTE ON FUNCTION enqueue_outbox(text, text, jsonb) TO devin_powerapps_app;

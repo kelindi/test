@@ -13,13 +13,29 @@ import { availableTools, toolRegistry } from './tool-registry';
 describe('portal access', () => {
   it('lists exactly the tools each seeded account can open', async () => {
     const accounts = [
-      ['support@example.com', 'support-password', 'support_agent'],
-      ['finance1@example.com', 'finance-password', 'finance_reviewer'],
-      ['finance2@example.com', 'finance-two-password', 'finance_reviewer'],
-      ['admin@example.com', 'admin-password', 'admin'],
+      [
+        'support@example.com',
+        'support-password',
+        'support_agent',
+        ['refunds', 'kyc'],
+      ],
+      [
+        'finance1@example.com',
+        'finance-password',
+        'finance_reviewer',
+        ['refunds'],
+      ],
+      [
+        'finance2@example.com',
+        'finance-two-password',
+        'finance_reviewer',
+        ['refunds'],
+      ],
+      ['kyc@example.com', 'kyc-password', 'kyc_reviewer', ['kyc']],
+      ['admin@example.com', 'admin-password', 'admin', ['refunds', 'kyc']],
     ] as const;
 
-    for (const [email, password, role] of accounts) {
+    for (const [email, password, role, expectedToolIds] of accounts) {
       const user = await authenticateUser(email, password);
       expect(user?.role).toBe(role);
       const session: Session = {
@@ -29,7 +45,8 @@ describe('portal access', () => {
       const actor = actorFromSession(session);
 
       expect(actor).not.toBeNull();
-      expect(availableTools(actor!)).toEqual(toolRegistry);
+      const tools = availableTools(actor!);
+      expect(tools.map((tool) => tool.id)).toEqual(expectedToolIds);
     }
   });
 

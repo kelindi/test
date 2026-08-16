@@ -101,6 +101,7 @@ Sign in at `/login` with one of these seeded accounts:
 | Support agent    | `support@example.com`  | `support-password`     |
 | Finance reviewer | `finance1@example.com` | `finance-password`     |
 | Finance reviewer | `finance2@example.com` | `finance-two-password` |
+| KYC reviewer     | `kyc@example.com`      | `kyc-password`         |
 | Admin            | `admin@example.com`    | `admin-password`       |
 
 There is deliberately no account provisioning, invite, password-reset, or

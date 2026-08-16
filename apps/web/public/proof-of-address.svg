@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="320" height="200" viewBox="0 0 320 200">
+  <rect width="320" height="200" fill="#e2e8f0" rx="8"/>
+  <polygon points="160,32 272,160 48,160" fill="#cbd5e1"/>
+  <rect x="130" y="120" width="60" height="40" fill="#94a3b8" rx="2"/>
+  <text x="160" y="190" text-anchor="middle" fill="#64748b" font-family="sans-serif" font-size="12">Proof of address</text>
+</svg>

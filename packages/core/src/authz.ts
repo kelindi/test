@@ -2,7 +2,11 @@
  * Authorization is a single policy boundary. A future policy engine can replace
  * this function without changing application call sites.
  */
-export type Role = 'support_agent' | 'finance_reviewer' | 'admin';
+export type Role =
+  | 'support_agent'
+  | 'finance_reviewer'
+  | 'kyc_reviewer'
+  | 'admin';
 
 export type Actor = {
   id: string;
@@ -25,7 +29,13 @@ export type Action =
   | 'refund:cancel'
   | 'refund:abandon'
   | 'audit:read'
-  | 'audit:export';
+  | 'audit:export'
+  | 'kyc:read'
+  | 'kyc:create'
+  | 'kyc:submit'
+  | 'kyc:approve'
+  | 'kyc:reject'
+  | 'kyc:request_info';
 
 export type RefundResource = {
   state?: string;
@@ -53,6 +63,9 @@ const policyTable: Record<Role, Partial<Record<Action, PolicyValue>>> = {
     'refund:read': true,
     'refund:approvals:read': true,
     'refund:cancel': ['pending_approval'],
+    'kyc:read': true,
+    'kyc:create': true,
+    'kyc:submit': ['needs_more_info'],
   },
   finance_reviewer: {
     'customer:search': true,
@@ -63,6 +76,13 @@ const policyTable: Record<Role, Partial<Record<Action, PolicyValue>>> = {
     'refund:retry': ['failed'],
     'audit:read': { condition: 'own_decision' },
   },
+  kyc_reviewer: {
+    'customer:search': true,
+    'kyc:read': true,
+    'kyc:approve': ['pending_review'],
+    'kyc:reject': ['pending_review'],
+    'kyc:request_info': ['pending_review'],
+  },
   admin: {
     'customer:search': true,
     'refund:read': true,
@@ -72,6 +92,7 @@ const policyTable: Record<Role, Partial<Record<Action, PolicyValue>>> = {
     'refund:abandon': ['failed'],
     'audit:read': true,
     'audit:export': true,
+    'kyc:read': true,
   },
 };
 
@@ -111,6 +132,9 @@ export function can(
   }
   if (action === 'refund:cancel') return requester === actor.id;
   if (action === 'refund:approve' || action === 'refund:reject') {
+    return requester !== actor.id && !approvals.includes(actor.id);
+  }
+  if (action === 'kyc:approve' || action === 'kyc:reject') {
     return requester !== actor.id && !approvals.includes(actor.id);
   }
   if (typeof capability === 'object' && 'condition' in capability) {
