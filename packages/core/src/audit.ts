@@ -49,3 +49,12 @@ export function auditCsv(rows: Record<string, unknown>[]): string {
     ),
   ].join('\n');
 }
+
+export async function exportAudit(
+  actor: Actor,
+  filter: AuditFilter = {},
+  format: 'csv' | 'json' = 'json',
+): Promise<string> {
+  const rows = await queryAudit(actor, filter);
+  return format === 'csv' ? auditCsv(rows) : JSON.stringify(rows);
+}

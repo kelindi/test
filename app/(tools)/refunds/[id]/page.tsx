@@ -1,7 +1,8 @@
 import Link from 'next/link';
+import crypto from 'node:crypto';
 
 import { auth } from '../../../../auth';
-import { queryAudit, readAs } from '@internal/core';
+import { auditEvent, logAccess, queryAudit, readAs } from '@internal/core';
 import { approveRefund, rejectRefund } from '../actions';
 
 export default async function RefundDetailPage({
@@ -29,10 +30,9 @@ export default async function RefundDetailPage({
   );
   if (!refund) return <main>Refund not found</main>;
   await readAs(actor, async (client) => {
-    await client.query(
-      "INSERT INTO application_audit_events (event_type, actor_id, request_id, metadata) VALUES ('refund.read', $1, current_setting('app.request_id'), $2)",
-      [actor.id, JSON.stringify({ refundId: id })],
-    );
+    const traceId = crypto.randomUUID();
+    await logAccess(client, actor, 'refund_request', id, traceId);
+    await auditEvent(client, 'refund.read', actor, { refundId: id }, traceId);
   });
   const audit = await queryAudit(actor, {
     tableName: 'refund_requests',
