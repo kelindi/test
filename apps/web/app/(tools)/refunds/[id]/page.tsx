@@ -24,12 +24,15 @@ import { auth } from '../../../../auth';
 
 export default async function RefundDetailPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ error?: string }>;
 }) {
   const session = await auth();
   if (!session?.user) redirect('/login');
   const { id } = await params;
+  const { error } = await searchParams;
   const actor = actorFromSession(session);
   if (!actor) redirect('/login');
   const refund = await readAs(
@@ -78,6 +81,11 @@ export default async function RefundDetailPage({
   return (
     <main className="mx-auto max-w-[1100px] px-6 py-10">
       <h1 className="text-xl font-semibold leading-7">Refund request</h1>
+      {error && (
+        <p className="mt-4 rounded-md border border-destructive bg-destructive/10 px-4 py-3 text-sm text-destructive">
+          {error}
+        </p>
+      )}
       <div className="mt-6 grid gap-6 md:grid-cols-2">
         <Card>
           <CardHeader>

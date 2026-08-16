@@ -2,6 +2,7 @@
 
 import crypto from 'node:crypto';
 import { revalidatePath } from 'next/cache';
+import { redirect } from 'next/navigation';
 import { z } from 'zod';
 
 import { currentActor } from '@/lib/auth';
@@ -141,8 +142,13 @@ export async function createRefund(formData: FormData) {
       return id;
     },
   );
-  if (!result.ok) throw new Error(result.error);
+  if (!result.ok) {
+    redirect(
+      `/refunds/new?error=${encodeURIComponent(result.error ?? 'Request failed')}`,
+    );
+  }
   revalidatePath('/refunds');
+  redirect('/refunds');
 }
 
 async function transitionRefund(
@@ -151,12 +157,22 @@ async function transitionRefund(
   comment: string | null,
 ) {
   const actor = await currentActor();
-  if (!actor) throw new Error('Authentication required');
-  await withActor(actor, async (client, traceId) => {
-    await approveRefundRequest(client, actor, id, action, comment, traceId);
-  });
+  if (!actor) {
+    redirect(
+      `/refunds/${id}?error=${encodeURIComponent('Authentication required')}`,
+    );
+  }
+  try {
+    await withActor(actor, async (client, traceId) => {
+      await approveRefundRequest(client, actor, id, action, comment, traceId);
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Action failed';
+    redirect(`/refunds/${id}?error=${encodeURIComponent(message)}`);
+  }
   revalidatePath(`/refunds/${id}`);
   revalidatePath('/refunds');
+  redirect(`/refunds/${id}`);
 }
 
 export async function approveRefund(formData: FormData) {
