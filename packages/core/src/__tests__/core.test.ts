@@ -232,7 +232,7 @@ describe.runIf(Boolean(process.env.DATABASE_URL))(
       const rows = (
         await withActor(SYSTEM_ACTOR, (client) =>
           client.query(
-            `SELECT table_name, column_name, sensitivity, redact_in_audit
+            `SELECT table_name, column_name, redact_in_audit
              FROM sensitive_columns ORDER BY table_name, column_name`,
           ),
         )
@@ -240,19 +240,16 @@ describe.runIf(Boolean(process.env.DATABASE_URL))(
       expect(rows).toContainEqual({
         table_name: 'refund_requests',
         column_name: 'notes',
-        sensitivity: 'internal',
         redact_in_audit: false,
       });
       expect(rows).toContainEqual({
         table_name: 'refund_approvals',
         column_name: 'comment',
-        sensitivity: 'internal',
         redact_in_audit: false,
       });
       expect(rows).toContainEqual({
         table_name: 'customers',
         column_name: 'email',
-        sensitivity: 'sensitive',
         redact_in_audit: true,
       });
     });

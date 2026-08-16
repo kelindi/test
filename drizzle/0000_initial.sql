@@ -188,7 +188,6 @@ CREATE TABLE access_log (
 CREATE TABLE sensitive_columns (
   table_name text NOT NULL,
   column_name text NOT NULL,
-  sensitivity text NOT NULL CHECK (sensitivity IN ('public', 'internal', 'sensitive')),
   redact_in_audit boolean NOT NULL DEFAULT false,
   PRIMARY KEY (table_name, column_name)
 );
@@ -226,12 +225,12 @@ CREATE SEQUENCE audit_log_id_seq;
 CREATE SEQUENCE application_audit_events_id_seq;
 
 INSERT INTO sensitive_columns VALUES
-  ('users', 'email', 'sensitive', true),
-  ('users', 'password_hash', 'sensitive', true),
-  ('customers', 'name', 'sensitive', true),
-  ('customers', 'email', 'sensitive', true),
-  ('refund_requests', 'notes', 'internal', false),
-  ('refund_approvals', 'comment', 'internal', false);
+  ('users', 'email', true),
+  ('users', 'password_hash', true),
+  ('customers', 'name', true),
+  ('customers', 'email', true),
+  ('refund_requests', 'notes', false),
+  ('refund_approvals', 'comment', false);
 
 CREATE OR REPLACE FUNCTION create_monthly_audit_partitions(month_start date)
 RETURNS void LANGUAGE plpgsql AS $$
