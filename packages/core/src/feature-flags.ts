@@ -128,3 +128,50 @@ export async function toggleFlag(
     updatedAt: new Date(),
   };
 }
+
+export type CreateFlagInput = {
+  key: string;
+  description: string;
+  environment: string;
+  initialEnabled?: boolean;
+};
+
+export async function createFlag(
+  client: DatabaseClient,
+  actor: Actor,
+  input: CreateFlagInput,
+  traceId: string = crypto.randomUUID(),
+): Promise<string> {
+  if (!can(actor, 'flag:create')) throw new Error('Not authorized');
+
+  const key = input.key.trim();
+  const description = input.description.trim();
+  const environment = input.environment.trim();
+  if (!key) throw new Error('Key is required');
+  if (!description) throw new Error('Description is required');
+  if (!environment) throw new Error('Environment is required');
+
+  const id = crypto.randomUUID();
+  const enabled = input.initialEnabled ?? false;
+
+  await client.query(
+    `INSERT INTO feature_flags
+       (id, key, description, environment, enabled, updated_by)
+     VALUES ($1, $2, $3, $4, $5, $6)`,
+    [id, key, description, environment, enabled, actor.id],
+  );
+
+  await auditEvent(
+    client,
+    'flag.created',
+    actor,
+    {
+      flagId: id,
+      key,
+      enabled,
+    },
+    traceId,
+  );
+
+  return id;
+}

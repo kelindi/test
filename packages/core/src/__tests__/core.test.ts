@@ -11,6 +11,7 @@ import {
   authenticateUser,
   approveRefundRequest,
   claimNext,
+  createFlag,
   createRefundRequest,
   dispatchRefund,
   FakeStripeProvider,
@@ -1014,17 +1015,21 @@ describe('feature flag authorization matrix', () => {
     role: 'engineering_team' as const,
   };
 
-  it('grants engineering_team read and toggle, denies other roles', () => {
+  it('grants engineering_team read, toggle, and create, denies other roles', () => {
     expect(can(engineering, 'flag:read')).toBe(true);
     expect(can(engineering, 'flag:toggle')).toBe(true);
+    expect(can(engineering, 'flag:create')).toBe(true);
     expect(can(support, 'flag:read')).toBe(false);
     expect(can(support, 'flag:toggle')).toBe(false);
+    expect(can(support, 'flag:create')).toBe(false);
     expect(can(reviewerOne, 'flag:read')).toBe(false);
     expect(can(reviewerOne, 'flag:toggle')).toBe(false);
+    expect(can(reviewerOne, 'flag:create')).toBe(false);
   });
 
-  it('grants admin flag read but not toggle', () => {
+  it('grants admin flag read and create but not toggle', () => {
     expect(can({ id: 'user_admin', role: 'admin' }, 'flag:read')).toBe(true);
+    expect(can({ id: 'user_admin', role: 'admin' }, 'flag:create')).toBe(true);
     expect(can({ id: 'user_admin', role: 'admin' }, 'flag:toggle')).toBe(false);
   });
 
@@ -1034,7 +1039,9 @@ describe('feature flag authorization matrix', () => {
       expect.arrayContaining([
         { role: 'engineering_team', action: 'flag:read' },
         { role: 'engineering_team', action: 'flag:toggle' },
+        { role: 'engineering_team', action: 'flag:create' },
         { role: 'admin', action: 'flag:read' },
+        { role: 'admin', action: 'flag:create' },
       ]),
     );
   });
@@ -1109,6 +1116,44 @@ describe.runIf(Boolean(process.env.DATABASE_URL))(
       expect(update).toBeDefined();
       expect(Boolean(update.before_data.enabled)).toBe(false);
       expect(Boolean(update.after_data.enabled)).toBe(true);
+
+      await withActor(SYSTEM_ACTOR, (client) =>
+        client.query('DELETE FROM feature_flags WHERE id = $1', [flagId]),
+      );
+    });
+
+    it('creates a flag through the core boundary and audits it', async () => {
+      const key = `create-test-${crypto.randomUUID()}`;
+      const flagId = await withActor(engineering, (client, traceId) =>
+        createFlag(
+          client,
+          engineering,
+          {
+            key,
+            description: 'Create boundary test',
+            environment: 'test',
+            initialEnabled: true,
+          },
+          traceId,
+        ),
+      );
+
+      const row = await withActor(engineering, (client) =>
+        client.query('SELECT key, enabled FROM feature_flags WHERE id = $1', [
+          flagId,
+        ]),
+      );
+      expect(row.rows[0]).toEqual({ key, enabled: true });
+
+      const appEvents = await withActor(SYSTEM_ACTOR, (client) =>
+        client.query(
+          `SELECT metadata FROM application_audit_events
+           WHERE event_type = 'flag.created' AND actor_id = $1
+           ORDER BY id DESC LIMIT 1`,
+          [engineering.id],
+        ),
+      );
+      expect(appEvents.rows[0].metadata).toMatchObject({ flagId, key });
 
       await withActor(SYSTEM_ACTOR, (client) =>
         client.query('DELETE FROM feature_flags WHERE id = $1', [flagId]),

@@ -31,7 +31,8 @@ export type Action =
   | 'audit:read'
   | 'audit:export'
   | 'flag:read'
-  | 'flag:toggle';
+  | 'flag:toggle'
+  | 'flag:create';
 
 export type RefundResource = {
   state?: string;
@@ -79,10 +80,12 @@ const policyTable: Record<Role, Partial<Record<Action, PolicyValue>>> = {
     'audit:read': true,
     'audit:export': true,
     'flag:read': true,
+    'flag:create': true,
   },
   engineering_team: {
     'flag:read': true,
     'flag:toggle': true,
+    'flag:create': true,
   },
 };
 

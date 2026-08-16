@@ -12,7 +12,7 @@ await owner.connect();
 await owner.query(`
   DROP TABLE IF EXISTS access_log, provider_calls, outbox, ledger_entries, ledger,
     refund_approvals, refund_requests, payments, customers, users,
-    sensitive_columns, audit_log, application_audit_events CASCADE;
+    sensitive_columns, audit_log, application_audit_events, feature_flags CASCADE;
   DROP FUNCTION IF EXISTS create_monthly_audit_partitions(date);
   DROP FUNCTION IF EXISTS install_audit_trigger(text);
   DROP FUNCTION IF EXISTS audit_row() CASCADE;

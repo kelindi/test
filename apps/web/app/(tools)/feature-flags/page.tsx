@@ -30,6 +30,11 @@ export default async function FeatureFlagsPage() {
     <main className="mx-auto max-w-[1100px] px-6 py-10">
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-semibold leading-7">Feature flags</h1>
+        {can(actor, 'flag:create') && (
+          <Button asChild>
+            <Link href="/feature-flags/new">New flag</Link>
+          </Button>
+        )}
       </div>
       <div className="mt-6 rounded-md border">
         <Table>
