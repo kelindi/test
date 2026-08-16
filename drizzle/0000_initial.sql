@@ -423,6 +423,7 @@ SELECT install_audit_trigger('ledger_entries');
 SELECT install_audit_trigger('outbox');
 SELECT install_audit_trigger('provider_calls');
 SELECT install_audit_trigger('access_log');
+SELECT install_audit_trigger('feature_flags');
 
 CREATE TRIGGER audit_log_immutable
 BEFORE UPDATE OR DELETE ON audit_log
@@ -503,6 +504,11 @@ CREATE POLICY access_log_admin ON access_log
 CREATE POLICY access_log_insert ON access_log
   FOR INSERT
   WITH CHECK (actor_id = current_setting('app.current_actor_id', true));
+CREATE POLICY feature_flags_engineering ON feature_flags
+  USING (current_setting('app.current_actor_role', true) IN ('engineering_team', 'admin', 'demo_admin'));
+CREATE POLICY feature_flags_owner_invariants ON feature_flags
+  FOR SELECT TO devin_powerapps_owner
+  USING (true);
 CREATE POLICY audit_log_owner_insert ON audit_log
   FOR INSERT TO devin_powerapps_owner
   WITH CHECK (true);
