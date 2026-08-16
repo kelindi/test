@@ -126,8 +126,6 @@ export async function queryRefundAudit(actor: Actor, refundId: string) {
               AND refund_approvals.refund_request_id = audit_log.row_pk)
             OR (audit_log.table_name = 'refund_approvals'
               AND refund_approvals.id::text = audit_log.row_pk)
-            OR (audit_log.table_name IN ('provider_calls', 'ledger_entries')
-              AND refund_approvals.refund_request_id = $1)
           )
       )`;
     }
