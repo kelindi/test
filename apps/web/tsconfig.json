@@ -1,0 +1,11 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./*"],
+      "@internal/core": ["../../packages/core/src/index.ts"]
+    }
+  },
+  "include": ["app", "auth.ts", "next-env.d.ts", "types", ".next/types/**/*.ts"]
+}

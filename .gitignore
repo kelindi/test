@@ -1,0 +1,5 @@
+node_modules
+.next
+apps/web/.next
+.env
+*.tsbuildinfo
