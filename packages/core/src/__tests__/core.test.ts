@@ -4,9 +4,15 @@ import path from 'node:path';
 
 import {
   can,
+  authenticateUser,
+  claimNext,
+  dispatchRefund,
   FakeStripeProvider,
+  SYSTEM_ACTOR,
+  sweepExecuting,
   money,
   parseMoney,
+  refundableBalance,
   StateMachine,
   verifyAuditChain,
   withActor,
@@ -20,6 +26,7 @@ describe('authorization matrix', () => {
   it.each([
     ['support_agent', 'refund:create', true],
     ['support_agent', 'refund:approve', false],
+    ['support_agent', 'refund:approvals:read', true],
     ['finance_reviewer', 'refund:create', false],
     ['finance_reviewer', 'refund:approve', true],
     ['admin', 'audit:export', true],
@@ -66,6 +73,9 @@ describe('state machine and money', () => {
       200n,
     );
     expect(() => parseMoney('1.999', 'USD')).toThrow();
+    expect(refundableBalance(1000n, 400n, 600n)).toBe(0n);
+    expect(refundableBalance(1000n, 400n, 599n)).toBe(1n);
+    expect(refundableBalance(1000n, 100n, 100n)).toBe(800n);
   });
 });
 
@@ -88,15 +98,193 @@ describe('mechanical database guarantees', () => {
 describe.runIf(Boolean(process.env.DATABASE_URL))(
   'Postgres compliance evidence',
   () => {
+    it('authenticates every seeded account through the pre-auth primitive', async () => {
+      const accounts = [
+        ['support@example.com', 'support-password', 'support_agent'],
+        ['finance1@example.com', 'finance-password', 'finance_reviewer'],
+        ['finance2@example.com', 'finance-two-password', 'finance_reviewer'],
+        ['admin@example.com', 'admin-password', 'admin'],
+      ] as const;
+      for (const [email, password, role] of accounts) {
+        const user = await authenticateUser(email, password);
+        expect(user?.role).toBe(role);
+      }
+      expect(
+        await authenticateUser('support@example.com', 'wrong-password'),
+      ).toBeNull();
+    });
+
+    it('preserves business justification while redacting customer PII', async () => {
+      const rows = (
+        await withActor(SYSTEM_ACTOR, (client) =>
+          client.query(
+            `SELECT table_name, column_name, sensitivity, redact_in_audit
+             FROM sensitive_columns ORDER BY table_name, column_name`,
+          ),
+        )
+      ).rows;
+      expect(rows).toContainEqual({
+        table_name: 'refund_requests',
+        column_name: 'notes',
+        sensitivity: 'internal',
+        redact_in_audit: false,
+      });
+      expect(rows).toContainEqual({
+        table_name: 'refund_approvals',
+        column_name: 'comment',
+        sensitivity: 'internal',
+        redact_in_audit: false,
+      });
+      expect(rows).toContainEqual({
+        table_name: 'customers',
+        column_name: 'email',
+        sensitivity: 'sensitive',
+        redact_in_audit: true,
+      });
+    });
+
+    it('executes an approved refund exactly once through outbox and ledger', async () => {
+      const id = `refund-worker-${Date.now()}`;
+      const key = `key-${id}`;
+      await withActor(reviewerOne, async (client) => {
+        await client.query(
+          `INSERT INTO refund_requests
+              (id, customer_id, payment_id, payment_snapshot, requested_by,
+               amount_minor, currency, reason_code, notes, state, idempotency_key)
+             VALUES ($1, 'customer_1', 'payment_1', $2, $3, 2, 'USD',
+                     'customer_request', 'worker test', 'approved', $4)`,
+          [
+            id,
+            JSON.stringify({ id: 'payment_1', amountMinor: '250000' }),
+            support.id,
+            key,
+          ],
+        );
+        await client.query(
+          `INSERT INTO outbox (kind, dedupe_key, payload)
+             VALUES ('refund.execute', $1, $2)`,
+          [
+            id,
+            JSON.stringify({
+              refundId: id,
+              paymentId: 'payment_1',
+              amountMinor: '2',
+              idempotencyKey: key,
+            }),
+          ],
+        );
+      });
+      const provider = new FakeStripeProvider();
+      await withActor(SYSTEM_ACTOR, async (client) => {
+        const item = await claimNext(client);
+        expect(item).not.toBeNull();
+        await dispatchRefund(client, provider, SYSTEM_ACTOR, item!);
+      });
+      const result = await withActor(SYSTEM_ACTOR, async (client) => ({
+        refund: (
+          await client.query(
+            'SELECT state FROM refund_requests WHERE id = $1',
+            [id],
+          )
+        ).rows[0],
+        ledger: (
+          await client.query(
+            'SELECT * FROM ledger_entries WHERE refund_request_id = $1',
+            [id],
+          )
+        ).rows,
+        calls: (
+          await client.query(
+            'SELECT * FROM provider_calls WHERE refund_request_id = $1',
+            [id],
+          )
+        ).rows,
+      }));
+      expect(result.refund.state).toBe('succeeded');
+      expect(result.ledger).toHaveLength(1);
+      expect(result.calls).toHaveLength(1);
+      expect(provider.calls).toEqual([key]);
+    });
+
+    it('settles a landed timeout through the sweeper without a duplicate ledger', async () => {
+      const id = `refund-sweeper-${Date.now()}`;
+      const key = `key-${id}`;
+      await withActor(reviewerOne, async (client) => {
+        await client.query(
+          `INSERT INTO refund_requests
+            (id, customer_id, payment_id, payment_snapshot, requested_by,
+             amount_minor, currency, reason_code, notes, state, idempotency_key)
+           VALUES ($1, 'customer_1', 'payment_1', $2, $3, 3, 'USD',
+                   'customer_request', 'sweeper test', 'approved', $4)`,
+          [
+            id,
+            JSON.stringify({ id: 'payment_1', amountMinor: '250000' }),
+            support.id,
+            key,
+          ],
+        );
+        await client.query(
+          `INSERT INTO outbox (kind, dedupe_key, payload)
+           VALUES ('refund.execute', $1, $2)`,
+          [
+            id,
+            JSON.stringify({
+              refundId: id,
+              paymentId: 'payment_1',
+              amountMinor: '3',
+              idempotencyKey: key,
+            }),
+          ],
+        );
+      });
+      const provider = new FakeStripeProvider();
+      provider.mode = 'timeout_then_succeeded';
+      await withActor(SYSTEM_ACTOR, async (client) => {
+        const item = await claimNext(client);
+        await dispatchRefund(client, provider, SYSTEM_ACTOR, item!);
+        await client.query(
+          `UPDATE provider_calls SET created_at = now() - interval '3 minutes'
+           WHERE refund_request_id = $1`,
+          [id],
+        );
+        await sweepExecuting(client, provider);
+      });
+      const result = await withActor(SYSTEM_ACTOR, async (client) => ({
+        state: (
+          await client.query(
+            'SELECT state FROM refund_requests WHERE id = $1',
+            [id],
+          )
+        ).rows[0].state,
+        ledger: (
+          await client.query(
+            'SELECT * FROM ledger_entries WHERE refund_request_id = $1',
+            [id],
+          )
+        ).rows,
+      }));
+      expect(result.state).toBe('succeeded');
+      expect(result.ledger).toHaveLength(1);
+      expect(provider.calls).toEqual([key]);
+    });
+
     it('audits concurrent writes without forking the hash chain', async () => {
+      const suffix = Date.now().toString();
       await Promise.all(
         Array.from({ length: 5 }, (_, index) =>
           withActor(
-            { ...support, id: `concurrent-${index}` },
+            { ...support, id: `concurrent-${suffix}-${index}` },
             async (client) => {
               await client.query(
-                'INSERT INTO customers (id, name, account_created_at) VALUES ($1, $2, now())',
-                [`concurrent-${index}`, `Concurrent ${index}`],
+                `INSERT INTO customers
+                  (id, external_id, name, email, account_created_at)
+                 VALUES ($1, $2, $3, $4, now())`,
+                [
+                  `concurrent-${suffix}-${index}`,
+                  `external-${suffix}-${index}`,
+                  `Concurrent ${index}`,
+                  `concurrent-${suffix}-${index}@example.com`,
+                ],
               );
             },
           ),
@@ -117,7 +305,7 @@ describe.runIf(Boolean(process.env.DATABASE_URL))(
         async (client) =>
           (
             await client.query(
-              'SELECT id FROM refund_requests WHERE requester_id = $1',
+              'SELECT id FROM refund_requests WHERE requested_by = $1',
               ['user_admin'],
             )
           ).rows,
@@ -133,18 +321,19 @@ describe.runIf(Boolean(process.env.DATABASE_URL))(
       await client.connect();
       const original = (
         await client.query(
-          'SELECT ctid, row_hash FROM audit_log_default LIMIT 1',
+          'SELECT id, created_at, row_hash, tableoid::regclass AS partition FROM audit_log LIMIT 1',
         )
       ).rows[0];
+      expect(original).toBeDefined();
       await client.query(
-        'ALTER TABLE audit_log_default DISABLE TRIGGER audit_log_immutable',
+        `ALTER TABLE ${original.partition} DISABLE TRIGGER ALL`,
       );
       await client.query(
-        "UPDATE audit_log_default SET row_hash = 'tampered' WHERE ctid = $1",
-        [original.ctid],
+        `UPDATE ${original.partition} SET row_hash = 'tampered' WHERE id = $1`,
+        [original.id],
       );
       await client.query(
-        'ALTER TABLE audit_log_default ENABLE TRIGGER audit_log_immutable',
+        `ALTER TABLE ${original.partition} ENABLE TRIGGER ALL`,
       );
       await client.end();
       expect(await verifyAuditChain()).toBe(false);
@@ -153,8 +342,14 @@ describe.runIf(Boolean(process.env.DATABASE_URL))(
       });
       await restore.connect();
       await restore.query(
-        'UPDATE audit_log_default SET row_hash = $1 WHERE ctid = $2',
-        [original.row_hash, original.ctid],
+        `ALTER TABLE ${original.partition} DISABLE TRIGGER ALL`,
+      );
+      await restore.query(
+        `UPDATE ${original.partition} SET row_hash = $1 WHERE id = $2`,
+        [original.row_hash, original.id],
+      );
+      await restore.query(
+        `ALTER TABLE ${original.partition} ENABLE TRIGGER ALL`,
       );
       await restore.end();
     });
