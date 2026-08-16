@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Textarea } from '@/components/ui/textarea';
+import { describeAudit, describeAuditWhen } from '@/lib/audit-format';
 import { actorFromSession } from '@/lib/auth';
 import { formatMoney } from '@/lib/format';
 import {
@@ -120,17 +121,17 @@ export default async function RefundDetailPage({
         <Card>
           <CardHeader>
             <CardTitle className="text-[13px] font-medium uppercase tracking-[0.02em] text-muted-foreground">
-              Approval history
+              Audit history
             </CardTitle>
           </CardHeader>
           <CardContent>
             <ul className="space-y-3 text-sm">
               {audit.map((entry: any) => (
                 <li key={`${entry.created_at}-${entry.id}`}>
-                  <span className="font-medium">{entry.operation}</span>{' '}
                   <span className="text-muted-foreground">
-                    by {entry.actor_id} at {entry.created_at.toISOString()}
-                  </span>
+                    {describeAuditWhen(entry)}
+                  </span>{' '}
+                  {describeAudit(entry)}
                 </li>
               ))}
             </ul>

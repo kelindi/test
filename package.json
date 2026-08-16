@@ -3,8 +3,8 @@
   "private": true,
   "packageManager": "pnpm@9.15.5",
   "scripts": {
-    "dev": "next dev apps/web",
-    "build": "next build apps/web",
+    "dev": "cd apps/web && next dev",
+    "build": "cd apps/web && next build",
     "lint": "prettier --check . && eslint .",
     "format": "prettier --write .",
     "typecheck": "tsc --noEmit",
