@@ -1,8 +1,10 @@
 import { capabilityMatrix } from '@internal/core';
+import { redirect } from 'next/navigation';
 import { auth } from '../../../../auth';
 
 export default async function CapabilitiesPage() {
   const session = await auth();
+  if (!session?.user) redirect('/login');
   if (session?.user?.role !== 'admin') return <main>Forbidden</main>;
   const rows = capabilityMatrix();
   return (

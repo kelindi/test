@@ -16,6 +16,7 @@ await owner.query(`
   DROP FUNCTION IF EXISTS create_monthly_audit_partitions(date);
   DROP FUNCTION IF EXISTS install_audit_trigger(text);
   DROP FUNCTION IF EXISTS audit_row() CASCADE;
+  DROP FUNCTION IF EXISTS append_application_audit_event(text, text, text, jsonb) CASCADE;
   DROP FUNCTION IF EXISTS validate_refund_payment() CASCADE;
   DROP FUNCTION IF EXISTS validate_payment_refunds() CASCADE;
   DROP FUNCTION IF EXISTS enqueue_outbox(text, text, jsonb) CASCADE;

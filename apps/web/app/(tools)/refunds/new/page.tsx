@@ -1,4 +1,6 @@
 import { createRefund, listCustomerPayments, searchCustomer } from '../actions';
+import { redirect } from 'next/navigation';
+import { auth } from '../../../../auth';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -9,6 +11,9 @@ export default async function NewRefundPage({
 }: {
   searchParams: Promise<{ email?: string }>;
 }) {
+  const session = await auth();
+  if (!session?.user) redirect('/login');
+
   const params = await searchParams;
   const email = params.email?.trim() ?? '';
   const customer = email ? await searchCustomer(email) : null;

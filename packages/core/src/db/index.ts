@@ -8,10 +8,16 @@ import { SYSTEM_ACTOR, type Role } from '../authz';
 
 export type DatabaseClient = pg.PoolClient;
 
-export const pool = new pg.Pool({
-  connectionString: process.env.DATABASE_URL,
-  max: 10,
-});
+let pool: pg.Pool | null = null;
+function getPool(): pg.Pool {
+  if (!pool) {
+    pool = new pg.Pool({
+      connectionString: process.env.DATABASE_URL,
+      max: 10,
+    });
+  }
+  return pool;
+}
 
 export type AuthenticatedUser = {
   id: string;
@@ -80,7 +86,7 @@ export async function withActor<T>(
 ): Promise<T> {
   if (!actor?.id || !actor.role) throw new Error('An actor is required');
 
-  const client = await pool.connect();
+  const client = await getPool().connect();
   try {
     await client.query('BEGIN');
     await client.query(
@@ -112,27 +118,12 @@ export async function auditEvent(
   metadata: Record<string, unknown> = {},
   traceId: string = crypto.randomUUID(),
 ): Promise<void> {
-  await client.query('SELECT pg_advisory_xact_lock(78123)');
-  const previous =
-    (
-      await client.query(
-        'SELECT row_hash FROM application_audit_events ORDER BY id DESC LIMIT 1',
-      )
-    ).rows[0]?.row_hash ?? '';
-  const content = JSON.stringify({
+  await client.query('SELECT append_application_audit_event($1, $2, $3, $4)', [
     eventType,
-    actorId: actor.id,
-    requestId: traceId,
-    metadata,
-    prevHash: previous,
-  });
-  const rowHash = crypto.createHash('sha256').update(content).digest('hex');
-  await client.query(
-    `INSERT INTO application_audit_events
-      (id, event_type, actor_id, request_id, metadata, prev_hash, row_hash)
-     VALUES (nextval('application_audit_events_id_seq'), $1, $2, $3, $4, $5, $6)`,
-    [eventType, actor.id, traceId, JSON.stringify(metadata), previous, rowHash],
-  );
+    actor.id,
+    traceId,
+    JSON.stringify(metadata),
+  ]);
 }
 
 export async function logAccess(
@@ -164,55 +155,75 @@ export async function enqueueOutbox(
 }
 
 export async function verifyAuditChain(): Promise<boolean> {
-  const rows = (await pool.query('SELECT * FROM audit_log ORDER BY id')).rows;
-  let previousHash = '';
+  return withActor(SYSTEM_ACTOR, async (client) => {
+    const rows = (await client.query('SELECT * FROM audit_log ORDER BY id'))
+      .rows;
+    let previousHash = '';
 
-  for (const row of rows) {
-    const result = await pool.query(
-      `SELECT encode(digest(json_build_object(
-        'tableName', $1::text,
-        'rowPk', $2::text,
-        'operation', $3::text,
-        'beforeData', $4::jsonb,
-        'afterData', $5::jsonb,
-        'actorId', $6::text,
-        'requestId', $7::text,
-        'prevHash', $8::text
-      )::text, 'sha256'), 'hex') AS hash`,
-      [
-        row.table_name,
-        row.row_pk,
-        row.operation,
-        JSON.stringify(row.before_data),
-        JSON.stringify(row.after_data),
-        row.actor_id,
-        row.request_id,
-        previousHash,
-      ],
-    );
-    if (row.prev_hash !== previousHash || row.row_hash !== result.rows[0].hash)
-      return false;
-    previousHash = row.row_hash;
-  }
-  return true;
+    for (const row of rows) {
+      const result = await client.query(
+        `SELECT encode(digest(json_build_object(
+          'tableName', $1::text,
+          'rowPk', $2::text,
+          'operation', $3::text,
+          'beforeData', $4::jsonb,
+          'afterData', $5::jsonb,
+          'actorId', $6::text,
+          'requestId', $7::text,
+          'prevHash', $8::text
+        )::text, 'sha256'), 'hex') AS hash`,
+        [
+          row.table_name,
+          row.row_pk,
+          row.operation,
+          JSON.stringify(row.before_data),
+          JSON.stringify(row.after_data),
+          row.actor_id,
+          row.request_id,
+          previousHash,
+        ],
+      );
+      if (
+        row.prev_hash !== previousHash ||
+        row.row_hash !== result.rows[0].hash
+      )
+        return false;
+      previousHash = row.row_hash;
+    }
+    return true;
+  });
 }
 
 export async function verifyApplicationAuditChain(): Promise<boolean> {
-  const rows = (
-    await pool.query('SELECT * FROM application_audit_events ORDER BY id')
-  ).rows;
-  let previousHash = '';
-  for (const row of rows) {
-    const content = JSON.stringify({
-      eventType: row.event_type,
-      actorId: row.actor_id,
-      requestId: row.request_id,
-      metadata: row.metadata,
-      prevHash: previousHash,
-    });
-    const hash = crypto.createHash('sha256').update(content).digest('hex');
-    if (row.prev_hash !== previousHash || row.row_hash !== hash) return false;
-    previousHash = row.row_hash;
-  }
-  return true;
+  return withActor(SYSTEM_ACTOR, async (client) => {
+    const rows = (
+      await client.query('SELECT * FROM application_audit_events ORDER BY id')
+    ).rows;
+    let previousHash = '';
+    for (const row of rows) {
+      const result = await client.query(
+        `SELECT encode(digest(json_build_object(
+          'eventType', $1::text,
+          'actorId', $2::text,
+          'requestId', $3::text,
+          'metadata', $4::jsonb,
+          'prevHash', $5::text
+        )::text, 'sha256'), 'hex') AS hash`,
+        [
+          row.event_type,
+          row.actor_id,
+          row.request_id,
+          JSON.stringify(row.metadata),
+          previousHash,
+        ],
+      );
+      if (
+        row.prev_hash !== previousHash ||
+        row.row_hash !== result.rows[0].hash
+      )
+        return false;
+      previousHash = row.row_hash;
+    }
+    return true;
+  });
 }

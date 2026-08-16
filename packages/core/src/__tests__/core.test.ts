@@ -1,10 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
 import {
   auditCsv,
+  auditEvent,
   can,
   capabilityMatrix,
   authenticateUser,
@@ -20,12 +21,15 @@ import {
   sweepExecuting,
   money,
   parseMoney,
+  queryAudit,
   refundableBalance,
   reviewerQueue,
   StateMachine,
   verifyAuditChain,
+  verifyApplicationAuditChain,
   withActor,
 } from '..';
+import { log } from '../logger';
 
 const support = { id: 'user_support', role: 'support_agent' as const };
 const reviewerOne = { id: 'user_finance_1', role: 'finance_reviewer' as const };
@@ -152,6 +156,28 @@ describe('state machine and money', () => {
       amount: 1250,
     });
   });
+
+  it('preserves structured logger field names while redacting values', () => {
+    const output = vi
+      .spyOn(console, 'info')
+      .mockImplementation(() => undefined);
+    log('test.event', {
+      actorId: 'actor-1',
+      email: 'secret@example.com',
+      count: 2,
+    });
+    expect(JSON.parse(output.mock.calls[0][0] as string)).toMatchObject({
+      event: 'test.event',
+      actorId: 'actor-1',
+      email: '[REDACTED]',
+      count: 2,
+    });
+    output.mockRestore();
+  });
+
+  it('denies audit reads before any database query for unsupported roles', async () => {
+    await expect(queryAudit(support)).rejects.toThrow('Not authorized');
+  });
 });
 
 describe('mechanical database guarantees', () => {
@@ -187,6 +213,19 @@ describe.runIf(Boolean(process.env.DATABASE_URL))(
       expect(
         await authenticateUser('support@example.com', 'wrong-password'),
       ).toBeNull();
+    });
+
+    it('verifies application events with canonical multi-key metadata', async () => {
+      await withActor(support, (client, traceId) =>
+        auditEvent(
+          client,
+          'test.multi_key_metadata',
+          support,
+          { zulu: 'last', alpha: 'first' },
+          traceId,
+        ),
+      );
+      expect(await verifyApplicationAuditChain()).toBe(true);
     });
 
     it('preserves business justification while redacting customer PII', async () => {
@@ -248,6 +287,85 @@ describe.runIf(Boolean(process.env.DATABASE_URL))(
         resource_type: 'customer',
         resource_id: 'customer_2',
       });
+    });
+
+    it('creates a request from the looked-up customer and selected charge', async () => {
+      const suffix = crypto.randomUUID();
+      let expectedAmount = 0n;
+      const refundId = await withActor(support, async (client) => {
+        const payments = new SeededPaymentsClient(
+          client,
+          new FakeStripeProvider(),
+        );
+        const customer = await lookupCustomerByEmail(
+          client,
+          support,
+          payments,
+          'second@example.com',
+        );
+        expect(customer?.id).toBe('customer_2');
+        const charges = await payments.listCustomerPayments(customer!.id);
+        const charge = charges[0];
+        expectedAmount = charge.amountMinor - charge.refundedMinor;
+        return createRefundRequest(client, payments, {
+          customerId: customer!.id,
+          paymentId: charge.id,
+          amountMinor: undefined,
+          currency: charge.currency,
+          reasonCode: 'customer_request',
+          notes: null,
+          requestedBy: support.id,
+          idempotencyKey: `lookup-create-${suffix}`,
+        });
+      });
+      const row = await withActor(support, (client) =>
+        client.query(
+          `SELECT customer_id, payment_id, amount_minor, requested_by
+           FROM refund_requests WHERE id = $1`,
+          [refundId],
+        ),
+      );
+      expect(row.rows[0]).toMatchObject({
+        customer_id: 'customer_2',
+        requested_by: support.id,
+      });
+      expect(['payment_4', 'payment_5']).toContain(row.rows[0].payment_id);
+      expect(BigInt(row.rows[0].amount_minor)).toBe(expectedAmount);
+      await withActor(support, (client) =>
+        client.query('DELETE FROM refund_requests WHERE id = $1', [refundId]),
+      );
+    });
+
+    it('returns the database row id when refund submission is duplicated', async () => {
+      const idempotencyKey = `duplicate-create-${crypto.randomUUID()}`;
+      const input = {
+        customerId: 'customer_2',
+        paymentId: 'payment_4',
+        amountMinor: 100n,
+        currency: 'USD',
+        reasonCode: 'customer_request',
+        notes: null,
+        requestedBy: support.id,
+        idempotencyKey,
+      } as const;
+      const first = await withActor(support, (client) =>
+        createRefundRequest(
+          client,
+          new SeededPaymentsClient(client, new FakeStripeProvider()),
+          input,
+        ),
+      );
+      const second = await withActor(support, (client) =>
+        createRefundRequest(
+          client,
+          new SeededPaymentsClient(client, new FakeStripeProvider()),
+          input,
+        ),
+      );
+      expect(second).toBe(first);
+      await withActor(support, (client) =>
+        client.query('DELETE FROM refund_requests WHERE id = $1', [first]),
+      );
     });
 
     it('projects the reviewer queue in one RLS-scoped data-layer query', async () => {
@@ -325,18 +443,22 @@ describe.runIf(Boolean(process.env.DATABASE_URL))(
 
     it('finance approval atomically settles state and enqueues execution work', async () => {
       const suffix = crypto.randomUUID();
-      const refundId = `approval-action-${suffix}`;
-      await withActor(support, async (client) => {
-        await client.query(
-          `INSERT INTO refund_requests
-            (id, customer_id, payment_id, payment_snapshot, requested_by,
-             amount_minor, currency, reason_code, notes, state, idempotency_key)
-           VALUES ($1, 'customer_1', 'payment_2', '{}', 'user_support',
-                   100, 'USD', 'other', 'Approval action test',
-                   'pending_approval', $2)`,
-          [refundId, `approval-key-${suffix}`],
-        );
-      });
+      const refundId = await withActor(support, (client) =>
+        createRefundRequest(
+          client,
+          new SeededPaymentsClient(client, new FakeStripeProvider()),
+          {
+            customerId: 'customer_1',
+            paymentId: 'payment_2',
+            amountMinor: 100n,
+            currency: 'USD',
+            reasonCode: 'other',
+            notes: 'Approval action test',
+            requestedBy: support.id,
+            idempotencyKey: `approval-key-${suffix}`,
+          },
+        ),
+      );
       await withActor(reviewerOne, async (client) => {
         await approveRefundRequest(
           client,
@@ -374,6 +496,164 @@ describe.runIf(Boolean(process.env.DATABASE_URL))(
       await withActor(SYSTEM_ACTOR, (client) =>
         client.query('DELETE FROM refund_requests WHERE id = $1', [refundId]),
       );
+    });
+
+    it('requires two distinct finance reviewers for a high-value request', async () => {
+      const suffix = crypto.randomUUID();
+      const refundId = await withActor(support, (client) =>
+        createRefundRequest(
+          client,
+          new SeededPaymentsClient(client, new FakeStripeProvider()),
+          {
+            customerId: 'customer_1',
+            paymentId: 'payment_1',
+            amountMinor: 150000n,
+            currency: 'USD',
+            reasonCode: 'customer_request',
+            notes: null,
+            requestedBy: support.id,
+            idempotencyKey: `two-reviewers-${suffix}`,
+          },
+        ),
+      );
+      await withActor(reviewerOne, (client) =>
+        approveRefundRequest(
+          client,
+          reviewerOne,
+          refundId,
+          'refund:approve',
+          null,
+        ),
+      );
+      const pending = await withActor(reviewerOne, (client) =>
+        client.query('SELECT state FROM refund_requests WHERE id = $1', [
+          refundId,
+        ]),
+      );
+      expect(pending.rows[0]).toEqual({ state: 'pending_approval' });
+      await expect(
+        withActor(reviewerOne, (client) =>
+          approveRefundRequest(
+            client,
+            reviewerOne,
+            refundId,
+            'refund:approve',
+            null,
+          ),
+        ),
+      ).rejects.toThrow(/segregation|already/i);
+      await withActor(reviewerTwo, (client) =>
+        approveRefundRequest(
+          client,
+          reviewerTwo,
+          refundId,
+          'refund:approve',
+          null,
+        ),
+      );
+      const approved = await withActor(reviewerTwo, (client) =>
+        client.query('SELECT state FROM refund_requests WHERE id = $1', [
+          refundId,
+        ]),
+      );
+      expect(approved.rows[0]).toEqual({ state: 'approved' });
+      await withActor(SYSTEM_ACTOR, async (client) => {
+        await client.query('DELETE FROM outbox WHERE dedupe_key = $1', [
+          `refund:${refundId}`,
+        ]);
+        await client.query(
+          'DELETE FROM refund_approvals WHERE refund_request_id = $1',
+          [refundId],
+        );
+        await client.query('DELETE FROM refund_requests WHERE id = $1', [
+          refundId,
+        ]);
+      });
+    });
+
+    it('rejects self-approval, allows commentless rejection, and denies admin decisions', async () => {
+      const suffix = crypto.randomUUID();
+      const refundId = await withActor(support, (client) =>
+        createRefundRequest(
+          client,
+          new SeededPaymentsClient(client, new FakeStripeProvider()),
+          {
+            customerId: 'customer_1',
+            paymentId: 'payment_2',
+            amountMinor: 100n,
+            currency: 'USD',
+            reasonCode: 'customer_request',
+            notes: null,
+            requestedBy: support.id,
+            idempotencyKey: `decision-boundaries-${suffix}`,
+          },
+        ),
+      );
+      await expect(
+        withActor(support, (client) =>
+          approveRefundRequest(
+            client,
+            support,
+            refundId,
+            'refund:approve',
+            null,
+          ),
+        ),
+      ).rejects.toThrow(/segregation|not authorized/i);
+      await expect(
+        withActor(SYSTEM_ACTOR, (client) =>
+          approveRefundRequest(
+            client,
+            SYSTEM_ACTOR,
+            refundId,
+            'refund:approve',
+            null,
+          ),
+        ),
+      ).rejects.toThrow(/not authorized|segregation/i);
+      await expect(
+        withActor(SYSTEM_ACTOR, (client) =>
+          approveRefundRequest(
+            client,
+            SYSTEM_ACTOR,
+            refundId,
+            'refund:reject',
+            null,
+          ),
+        ),
+      ).rejects.toThrow(/not authorized|segregation/i);
+      await withActor(reviewerOne, (client) =>
+        approveRefundRequest(
+          client,
+          reviewerOne,
+          refundId,
+          'refund:reject',
+          null,
+        ),
+      );
+      const rejected = await withActor(reviewerOne, (client) =>
+        client.query(`SELECT state FROM refund_requests WHERE id = $1`, [
+          refundId,
+        ]),
+      );
+      expect(rejected.rows[0]).toEqual({ state: 'rejected' });
+      const approval = await withActor(SYSTEM_ACTOR, (client) =>
+        client.query(
+          `SELECT comment FROM refund_approvals
+           WHERE refund_request_id = $1 AND decision = 'rejected'`,
+          [refundId],
+        ),
+      );
+      expect(approval.rows[0]).toEqual({ comment: null });
+      await withActor(SYSTEM_ACTOR, async (client) => {
+        await client.query(
+          'DELETE FROM refund_approvals WHERE refund_request_id = $1',
+          [refundId],
+        );
+        await client.query('DELETE FROM refund_requests WHERE id = $1', [
+          refundId,
+        ]);
+      });
     });
 
     it('enqueues through the owner policy without changing the caller actor context', async () => {

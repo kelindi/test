@@ -10,6 +10,8 @@ import {
 
 export async function GET(request: Request) {
   const session = await auth();
+  if (!session?.user)
+    return NextResponse.redirect(new URL('/login', request.url));
   if (session?.user?.role !== 'admin')
     return new NextResponse('Forbidden', { status: 403 });
   const url = new URL(request.url);

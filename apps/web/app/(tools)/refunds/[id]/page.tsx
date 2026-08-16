@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import crypto from 'node:crypto';
+import { redirect } from 'next/navigation';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -25,15 +26,10 @@ export default async function RefundDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const session = await auth();
-  if (!session?.user)
-    return (
-      <main>
-        <Link href="/login">Sign in</Link>
-      </main>
-    );
+  if (!session?.user) redirect('/login');
   const { id } = await params;
   const actor = actorFromSession(session);
-  if (!actor) return <main>Invalid session</main>;
+  if (!actor) redirect('/login');
   const refund = await readAs(
     actor,
     async (client) =>

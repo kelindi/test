@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { redirect } from 'next/navigation';
 
 import { reviewerQueue } from '@internal/core';
 import { Badge } from '@/components/ui/badge';
@@ -17,15 +18,10 @@ import { auth } from '../../../auth';
 
 export default async function RefundQueuePage() {
   const session = await auth();
-  if (!session?.user)
-    return (
-      <main>
-        <Link href="/login">Sign in to view refunds</Link>
-      </main>
-    );
+  if (!session?.user) redirect('/login');
 
   const actor = actorFromSession(session);
-  if (!actor) return <main>Invalid session</main>;
+  if (!actor) redirect('/login');
   const rows = await reviewerQueue(actor);
 
   return (

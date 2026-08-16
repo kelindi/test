@@ -18,6 +18,9 @@ export const toolRegistry: readonly ToolDefinition[] = [
   },
 ];
 
-export function availableTools(actor: Actor) {
-  return toolRegistry.filter((tool) => can(actor, tool.capability));
+export function availableTools(
+  actor: Actor,
+  registry: readonly ToolDefinition[] = toolRegistry,
+) {
+  return registry.filter((tool) => can(actor, tool.capability));
 }

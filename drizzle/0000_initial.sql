@@ -227,6 +227,7 @@ CREATE SEQUENCE application_audit_events_id_seq;
 
 INSERT INTO sensitive_columns VALUES
   ('users', 'email', 'sensitive', true),
+  ('users', 'password_hash', 'sensitive', true),
   ('customers', 'name', 'sensitive', true),
   ('customers', 'email', 'sensitive', true),
   ('refund_requests', 'notes', 'internal', false),
@@ -320,6 +321,43 @@ BEGIN
 END;
 $$;
 
+CREATE OR REPLACE FUNCTION append_application_audit_event(
+  event_type text,
+  actor_id text,
+  request_id text,
+  metadata jsonb
+)
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  previous_hash text;
+BEGIN
+  PERFORM require_actor();
+  PERFORM pg_advisory_xact_lock(78123);
+  SELECT row_hash INTO previous_hash
+  FROM application_audit_events
+  ORDER BY id DESC
+  LIMIT 1;
+  previous_hash := COALESCE(previous_hash, '');
+  INSERT INTO application_audit_events (
+    id, event_type, actor_id, request_id, metadata, prev_hash, row_hash
+  ) VALUES (
+    nextval('application_audit_events_id_seq'),
+    event_type,
+    actor_id,
+    request_id,
+    metadata,
+    previous_hash,
+    encode(digest(json_build_object(
+      'eventType', event_type,
+      'actorId', actor_id,
+      'requestId', request_id,
+      'metadata', metadata,
+      'prevHash', previous_hash
+    )::text, 'sha256'), 'hex')
+  );
+END;
+$$;
+
 CREATE OR REPLACE FUNCTION deny_audit_mutation()
 RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
@@ -373,6 +411,10 @@ ALTER TABLE provider_calls ENABLE ROW LEVEL SECURITY;
 ALTER TABLE provider_calls FORCE ROW LEVEL SECURITY;
 ALTER TABLE access_log ENABLE ROW LEVEL SECURITY;
 ALTER TABLE access_log FORCE ROW LEVEL SECURITY;
+ALTER TABLE audit_log ENABLE ROW LEVEL SECURITY;
+ALTER TABLE audit_log FORCE ROW LEVEL SECURITY;
+ALTER TABLE application_audit_events ENABLE ROW LEVEL SECURITY;
+ALTER TABLE application_audit_events FORCE ROW LEVEL SECURITY;
 
 CREATE POLICY users_admin ON users
   USING (current_setting('app.current_actor_role', true) = 'admin');
@@ -407,6 +449,43 @@ CREATE POLICY access_log_admin ON access_log
 CREATE POLICY access_log_insert ON access_log
   FOR INSERT
   WITH CHECK (actor_id = current_setting('app.current_actor_id', true));
+CREATE POLICY audit_log_owner_insert ON audit_log
+  FOR INSERT TO devin_powerapps_owner
+  WITH CHECK (true);
+CREATE POLICY audit_log_owner_read ON audit_log
+  FOR SELECT TO devin_powerapps_owner
+  USING (true);
+CREATE POLICY audit_log_admin_read ON audit_log
+  FOR SELECT
+  USING (current_setting('app.current_actor_role', true) = 'admin');
+CREATE POLICY audit_log_finance_own_decision ON audit_log
+  FOR SELECT
+  USING (
+    current_setting('app.current_actor_role', true) = 'finance_reviewer'
+    AND EXISTS (
+      SELECT 1
+      FROM refund_approvals
+      WHERE approver_id = current_setting('app.current_actor_id', true)
+        AND (
+          (audit_log.table_name = 'refund_requests'
+            AND refund_approvals.refund_request_id = audit_log.row_pk)
+          OR (audit_log.table_name = 'refund_approvals'
+            AND refund_approvals.id::text = audit_log.row_pk)
+        )
+    )
+  );
+CREATE POLICY application_audit_events_actor_insert ON application_audit_events
+  FOR INSERT
+  WITH CHECK (actor_id = current_setting('app.current_actor_id', true));
+CREATE POLICY application_audit_events_owner_insert ON application_audit_events
+  FOR INSERT TO devin_powerapps_owner
+  WITH CHECK (true);
+CREATE POLICY application_audit_events_owner_read ON application_audit_events
+  FOR SELECT TO devin_powerapps_owner
+  USING (true);
+CREATE POLICY application_audit_events_admin_read ON application_audit_events
+  FOR SELECT
+  USING (current_setting('app.current_actor_role', true) = 'admin');
 
 GRANT SELECT, INSERT, UPDATE, DELETE ON users, customers, payments, refund_requests,
   refund_approvals, ledger_entries, provider_calls TO devin_powerapps_app;
@@ -414,6 +493,9 @@ GRANT SELECT, UPDATE, DELETE ON outbox TO devin_powerapps_app;
 REVOKE INSERT ON outbox FROM devin_powerapps_app;
 GRANT EXECUTE ON FUNCTION enqueue_outbox(text, text, jsonb) TO devin_powerapps_app;
 GRANT SELECT, INSERT, UPDATE, DELETE ON access_log TO devin_powerapps_app;
-GRANT SELECT, INSERT ON application_audit_events TO devin_powerapps_app;
+GRANT SELECT ON application_audit_events TO devin_powerapps_app;
+REVOKE INSERT ON application_audit_events FROM devin_powerapps_app;
 GRANT SELECT ON audit_log, sensitive_columns TO devin_powerapps_app;
+GRANT EXECUTE ON FUNCTION append_application_audit_event(text, text, text, jsonb)
+  TO devin_powerapps_app;
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO devin_powerapps_app;

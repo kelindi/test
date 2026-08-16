@@ -1,4 +1,5 @@
 import type { Actor } from './authz';
+import { can } from './authz';
 import { readAs } from './db';
 
 export type AuditFilter = {
@@ -9,6 +10,11 @@ export type AuditFilter = {
 };
 
 export async function queryAudit(actor: Actor, filter: AuditFilter = {}) {
+  const ownDecision =
+    actor.role === 'finance_reviewer' ? [actor.id] : undefined;
+  if (!can(actor, 'audit:read', { approvalActorIds: ownDecision })) {
+    throw new Error('Not authorized');
+  }
   const conditions: string[] = [];
   const values: string[] = [];
 

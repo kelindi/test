@@ -34,11 +34,19 @@ export class StateMachine<State extends string> {
         candidate.to === nextState &&
         candidate.action === action,
     );
-    if (
-      !rule ||
-      (action.includes(':') && !can(actor, action as Action, resource))
-    ) {
+    if (!rule) {
       throw new Error('Transition is not permitted');
+    }
+    if (action.includes(':') && !can(actor, action as Action, resource)) {
+      const requester = (resource.requestedBy ?? resource.requesterId) as string | undefined;
+      const approvals = (resource.approvalActorIds ?? []) as string[];
+      if (
+        (action === 'refund:approve' || action === 'refund:reject') &&
+        (requester === actor.id || approvals.includes(actor.id))
+      ) {
+        throw new Error('Segregation of duties violation');
+      }
+      throw new Error('Transition is not permitted: not authorized');
     }
     if (rule.guard && !rule.guard(actor, resource))
       throw new Error('Transition guard failed');

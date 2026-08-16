@@ -30,6 +30,7 @@ PostgreSQL administrator account for these commands:
 CREATE ROLE devin_powerapps_owner LOGIN PASSWORD 'owner_dev_password';
 CREATE ROLE devin_powerapps_app LOGIN PASSWORD 'app_dev_password';
 CREATE DATABASE devin_powerapps_poc OWNER devin_powerapps_owner;
+CREATE DATABASE devin_powerapps_poc_test OWNER devin_powerapps_owner;
 ```
 
 The setup script owns and recreates the proof-of-concept schema as
@@ -60,6 +61,20 @@ The example URLs use
 `sslmode=require&uselibpqcompat=true` for the local self-signed PostgreSQL
 certificate. Production deployments should use normal certificate-chain
 verification.
+
+Tests always override `DATABASE_URL` to the separate
+`devin_powerapps_poc_test` database. To initialize it without touching the
+development database, run:
+
+```bash
+DATABASE_URL="postgres://devin_powerapps_app:app_dev_password@localhost:5432/devin_powerapps_poc_test?sslmode=require&uselibpqcompat=true" \
+DATABASE_OWNER_URL="postgres://devin_powerapps_owner:owner_dev_password@localhost:5432/devin_powerapps_poc_test?sslmode=require&uselibpqcompat=true" \
+pnpm db:setup
+```
+
+You can override those derived test connections with `DATABASE_TEST_URL` and
+`DATABASE_TEST_OWNER_URL`. The test setup removes rows created by test
+identifiers after each test; it does not truncate seeded fixtures.
 
 ### Install, seed, and run
 
@@ -115,6 +130,9 @@ pnpm typecheck
 pnpm test
 pnpm build
 ```
+
+`pnpm test` uses the test database configured above and never the development
+database.
 
 For a clean database and complete local verification:
 

@@ -8,6 +8,7 @@ export function log(
 ) {
   const safeFields = Object.fromEntries(
     Object.entries(fields).map(([key, value]) => [
+      key,
       key.toLowerCase().includes('email') || key.toLowerCase().includes('name')
         ? '[REDACTED]'
         : value,

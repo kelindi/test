@@ -174,6 +174,10 @@ runWithDatabase('auditor-facing audit completeness kit', () => {
     );
     expect(customerInsert.after_data.email).toBeUndefined();
     expect(customerInsert.after_data.name).toBeUndefined();
+    const userInsert = rows.find(
+      (row) => row.table_name === 'users' && row.operation === 'INSERT',
+    );
+    expect(userInsert.after_data.password_hash).toBeUndefined();
     expect(refundInsert.after_data.notes).toBe('audit justification');
     expect(await verifyAuditChain()).toBe(true);
   });
