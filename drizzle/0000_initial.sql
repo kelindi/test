@@ -12,7 +12,7 @@ CREATE TABLE users (
   email text NOT NULL UNIQUE,
   name text NOT NULL,
   password_hash text NOT NULL,
-  role text NOT NULL CHECK (role IN ('support_agent', 'finance_reviewer', 'admin')),
+  role text NOT NULL CHECK (role IN ('support_agent', 'finance_reviewer', 'admin', 'engineering_team')),
   is_active boolean NOT NULL DEFAULT true,
   created_at timestamptz NOT NULL DEFAULT now()
 );
@@ -174,6 +174,17 @@ CREATE TABLE provider_calls (
   response_payload jsonb,
   status text NOT NULL,
   created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE feature_flags (
+  id text PRIMARY KEY,
+  key text NOT NULL UNIQUE,
+  description text NOT NULL,
+  environment text NOT NULL,
+  enabled boolean NOT NULL DEFAULT false,
+  updated_by text NOT NULL REFERENCES users(id),
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
 );
 
 CREATE TABLE access_log (
@@ -384,6 +395,7 @@ SELECT install_audit_trigger('ledger_entries');
 SELECT install_audit_trigger('outbox');
 SELECT install_audit_trigger('provider_calls');
 SELECT install_audit_trigger('access_log');
+SELECT install_audit_trigger('feature_flags');
 
 CREATE TRIGGER audit_log_immutable
 BEFORE UPDATE OR DELETE ON audit_log
@@ -410,6 +422,8 @@ ALTER TABLE provider_calls ENABLE ROW LEVEL SECURITY;
 ALTER TABLE provider_calls FORCE ROW LEVEL SECURITY;
 ALTER TABLE access_log ENABLE ROW LEVEL SECURITY;
 ALTER TABLE access_log FORCE ROW LEVEL SECURITY;
+ALTER TABLE feature_flags ENABLE ROW LEVEL SECURITY;
+ALTER TABLE feature_flags FORCE ROW LEVEL SECURITY;
 ALTER TABLE audit_log ENABLE ROW LEVEL SECURITY;
 ALTER TABLE audit_log FORCE ROW LEVEL SECURITY;
 ALTER TABLE application_audit_events ENABLE ROW LEVEL SECURITY;
@@ -448,6 +462,11 @@ CREATE POLICY access_log_admin ON access_log
 CREATE POLICY access_log_insert ON access_log
   FOR INSERT
   WITH CHECK (actor_id = current_setting('app.current_actor_id', true));
+CREATE POLICY feature_flags_engineering ON feature_flags
+  USING (current_setting('app.current_actor_role', true) IN ('engineering_team', 'admin'));
+CREATE POLICY feature_flags_owner_invariants ON feature_flags
+  FOR SELECT TO devin_powerapps_owner
+  USING (true);
 CREATE POLICY audit_log_owner_insert ON audit_log
   FOR INSERT TO devin_powerapps_owner
   WITH CHECK (true);
@@ -487,7 +506,7 @@ CREATE POLICY application_audit_events_admin_read ON application_audit_events
   USING (current_setting('app.current_actor_role', true) = 'admin');
 
 GRANT SELECT, INSERT, UPDATE, DELETE ON users, customers, payments, refund_requests,
-  refund_approvals, ledger_entries, provider_calls TO devin_powerapps_app;
+  refund_approvals, ledger_entries, provider_calls, feature_flags TO devin_powerapps_app;
 GRANT SELECT, UPDATE, DELETE ON outbox TO devin_powerapps_app;
 REVOKE INSERT ON outbox FROM devin_powerapps_app;
 GRANT EXECUTE ON FUNCTION enqueue_outbox(text, text, jsonb) TO devin_powerapps_app;

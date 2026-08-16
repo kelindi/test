@@ -2,7 +2,11 @@
  * Authorization is a single policy boundary. A future policy engine can replace
  * this function without changing application call sites.
  */
-export type Role = 'support_agent' | 'finance_reviewer' | 'admin';
+export type Role =
+  | 'support_agent'
+  | 'finance_reviewer'
+  | 'admin'
+  | 'engineering_team';
 
 export type Actor = {
   id: string;
@@ -25,7 +29,9 @@ export type Action =
   | 'refund:cancel'
   | 'refund:abandon'
   | 'audit:read'
-  | 'audit:export';
+  | 'audit:export'
+  | 'flag:read'
+  | 'flag:toggle';
 
 export type RefundResource = {
   state?: string;
@@ -72,6 +78,11 @@ const policyTable: Record<Role, Partial<Record<Action, PolicyValue>>> = {
     'refund:abandon': ['failed'],
     'audit:read': true,
     'audit:export': true,
+    'flag:read': true,
+  },
+  engineering_team: {
+    'flag:read': true,
+    'flag:toggle': true,
   },
 };
 

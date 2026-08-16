@@ -4,11 +4,18 @@ import {
   authenticateUser,
   can,
   type Action,
+  type Role,
 } from '../../packages/core/src/index';
 import type { Session } from 'next-auth';
 
 import { actorFromSession } from './lib/actor';
 import { availableTools, toolRegistry } from './tool-registry';
+
+function expectedToolsFor(role: Role) {
+  return toolRegistry.filter((tool) =>
+    can({ id: 'any_user', role }, tool.capability),
+  );
+}
 
 describe('portal access', () => {
   it('lists exactly the tools each seeded account can open', async () => {
@@ -17,6 +24,7 @@ describe('portal access', () => {
       ['finance1@example.com', 'finance-password', 'finance_reviewer'],
       ['finance2@example.com', 'finance-two-password', 'finance_reviewer'],
       ['admin@example.com', 'admin-password', 'admin'],
+      ['eng@example.com', 'engineering-password', 'engineering_team'],
     ] as const;
 
     for (const [email, password, role] of accounts) {
@@ -29,7 +37,7 @@ describe('portal access', () => {
       const actor = actorFromSession(session);
 
       expect(actor).not.toBeNull();
-      expect(availableTools(actor!)).toEqual(toolRegistry);
+      expect(availableTools(actor!)).toEqual(expectedToolsFor(role));
     }
   });
 
@@ -44,10 +52,18 @@ describe('portal access', () => {
         gatedTool,
       ]),
     ).toEqual([]);
-    for (const tool of toolRegistry) {
-      expect(can({ id: 'test', role: 'support_agent' }, tool.capability)).toBe(
-        true,
-      );
+
+    const supportTools = availableTools(
+      { id: 'user_support', role: 'support_agent' },
+      toolRegistry,
+    );
+    for (const tool of supportTools) {
+      expect(
+        can({ id: 'user_support', role: 'support_agent' }, tool.capability),
+      ).toBe(true);
     }
+    expect(supportTools).toEqual(
+      toolRegistry.filter((tool) => tool.id === 'refunds'),
+    );
   });
 });

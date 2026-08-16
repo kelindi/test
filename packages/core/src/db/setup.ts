@@ -48,12 +48,14 @@ await owner.query(
    ('user_support', 'support@example.com', 'Support Agent', $1, 'support_agent'),
    ('user_finance_1', 'finance1@example.com', 'Finance Reviewer One', $2, 'finance_reviewer'),
    ('user_finance_2', 'finance2@example.com', 'Finance Reviewer Two', $3, 'finance_reviewer'),
-   ('user_admin', 'admin@example.com', 'Administrator', $4, 'admin')`,
+   ('user_admin', 'admin@example.com', 'Administrator', $4, 'admin'),
+   ('user_engineering', 'eng@example.com', 'Engineering Team', $5, 'engineering_team')`,
   [
     hashPassword('support-password'),
     hashPassword('finance-password'),
     hashPassword('finance-two-password'),
     hashPassword('admin-password'),
+    hashPassword('engineering-password'),
   ],
 );
 
@@ -75,6 +77,13 @@ await owner.query(
      ('payment_5', 'customer_2', 'ch_demo_5', 75000, 25000, 'USD', now() - interval '8 days', 'captured'),
      ('payment_6', 'customer_3', 'ch_demo_6', 12000, 0, 'USD', now() - interval '6 days', 'captured'),
      ('payment_7', 'customer_3', 'ch_demo_7', 43000, 5000, 'USD', now() - interval '3 days', 'captured')`,
+);
+
+await owner.query(
+  `INSERT INTO feature_flags (id, key, description, environment, enabled, updated_by)
+   VALUES
+     ('flag_1', 'new_checkout_flow', 'New checkout experience', 'production', false, 'user_admin'),
+     ('flag_2', 'support_ai_assist', 'AI assist in support chat', 'production', true, 'user_admin')`,
 );
 
 await owner.end();
