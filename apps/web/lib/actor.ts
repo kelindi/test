@@ -6,6 +6,8 @@ const roles: readonly Role[] = [
   'finance_reviewer',
   'kyc_reviewer',
   'admin',
+  'engineering_team',
+  'demo_admin',
 ];
 
 function isRole(value: string): value is Role {

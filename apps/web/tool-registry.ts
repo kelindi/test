@@ -23,6 +23,13 @@ export const toolRegistry: readonly ToolDefinition[] = [
     route: '/kyc',
     capability: 'kyc:read',
   },
+  {
+    id: 'feature-flags',
+    name: 'Feature Flags',
+    description: 'List and toggle product feature flags.',
+    route: '/feature-flags',
+    capability: 'flag:read',
+  },
 ];
 
 export function availableTools(

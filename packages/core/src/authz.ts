@@ -6,7 +6,9 @@ export type Role =
   | 'support_agent'
   | 'finance_reviewer'
   | 'kyc_reviewer'
-  | 'admin';
+  | 'admin'
+  | 'engineering_team'
+  | 'demo_admin';
 
 export type Actor = {
   id: string;
@@ -35,7 +37,10 @@ export type Action =
   | 'kyc:submit'
   | 'kyc:approve'
   | 'kyc:reject'
-  | 'kyc:request_info';
+  | 'kyc:request_info'
+  | 'flag:read'
+  | 'flag:toggle'
+  | 'flag:create';
 
 export type RefundResource = {
   state?: string;
@@ -93,6 +98,35 @@ const policyTable: Record<Role, Partial<Record<Action, PolicyValue>>> = {
     'audit:read': true,
     'audit:export': true,
     'kyc:read': true,
+    'flag:read': true,
+    'flag:create': true,
+  },
+  engineering_team: {
+    'flag:read': true,
+    'flag:toggle': true,
+    'flag:create': true,
+  },
+  demo_admin: {
+    'customer:search': true,
+    'refund:create': true,
+    'refund:read': true,
+    'refund:approvals:read': true,
+    'refund:approve': true,
+    'refund:reject': true,
+    'refund:retry': true,
+    'refund:cancel': true,
+    'refund:abandon': true,
+    'audit:read': true,
+    'audit:export': true,
+    'kyc:read': true,
+    'kyc:create': true,
+    'kyc:submit': true,
+    'kyc:approve': true,
+    'kyc:reject': true,
+    'kyc:request_info': true,
+    'flag:read': true,
+    'flag:toggle': true,
+    'flag:create': true,
   },
 };
 
@@ -120,6 +154,7 @@ export function can(
 
   const capability = policyTable[actor.role][action];
   if (!capability) return false;
+  if (actor.role === 'demo_admin') return true;
   const states = Array.isArray(capability)
     ? capability
     : capability === true

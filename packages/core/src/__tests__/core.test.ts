@@ -11,11 +11,14 @@ import {
   authenticateUser,
   approveRefundRequest,
   claimNext,
+  createFlag,
   createRefundRequest,
   dispatchRefund,
   FakeStripeProvider,
   enqueueOutbox,
+  flagList,
   lookupCustomerByEmail,
+  readFlag,
   SeededPaymentsClient,
   SYSTEM_ACTOR,
   sweepExecuting,
@@ -29,6 +32,7 @@ import {
   decideKycCase,
   kycQueue,
   StateMachine,
+  toggleFlag,
   verifyAuditChain,
   verifyApplicationAuditChain,
   withActor,
@@ -1142,3 +1146,163 @@ describe('provider idempotency seam', () => {
     expect(provider.calls).toEqual(['same-key']);
   });
 });
+
+describe('feature flag authorization matrix', () => {
+  const engineering = {
+    id: 'user_engineering',
+    role: 'engineering_team' as const,
+  };
+
+  it('grants engineering_team read, toggle, and create, denies other roles', () => {
+    expect(can(engineering, 'flag:read')).toBe(true);
+    expect(can(engineering, 'flag:toggle')).toBe(true);
+    expect(can(engineering, 'flag:create')).toBe(true);
+    expect(can(support, 'flag:read')).toBe(false);
+    expect(can(support, 'flag:toggle')).toBe(false);
+    expect(can(support, 'flag:create')).toBe(false);
+    expect(can(reviewerOne, 'flag:read')).toBe(false);
+    expect(can(reviewerOne, 'flag:toggle')).toBe(false);
+    expect(can(reviewerOne, 'flag:create')).toBe(false);
+  });
+
+  it('grants admin flag read and create but not toggle', () => {
+    expect(can({ id: 'user_admin', role: 'admin' }, 'flag:read')).toBe(true);
+    expect(can({ id: 'user_admin', role: 'admin' }, 'flag:create')).toBe(true);
+    expect(can({ id: 'user_admin', role: 'admin' }, 'flag:toggle')).toBe(false);
+  });
+
+  it('includes flag capabilities in the capability matrix', () => {
+    const matrix = capabilityMatrix();
+    expect(matrix).toEqual(
+      expect.arrayContaining([
+        { role: 'engineering_team', action: 'flag:read' },
+        { role: 'engineering_team', action: 'flag:toggle' },
+        { role: 'engineering_team', action: 'flag:create' },
+        { role: 'admin', action: 'flag:read' },
+        { role: 'admin', action: 'flag:create' },
+      ]),
+    );
+  });
+});
+
+describe.runIf(Boolean(process.env.DATABASE_URL))(
+  'Feature flag Postgres compliance evidence',
+  () => {
+    const engineering = {
+      id: 'user_engineering',
+      role: 'engineering_team' as const,
+    };
+
+    it('lists seeded flags for engineering_team and admin, hides them from support', async () => {
+      const engineeringRows = await flagList(engineering);
+      expect(engineeringRows.length).toBeGreaterThanOrEqual(2);
+      const adminRows = await flagList({ id: 'user_admin', role: 'admin' });
+      expect(adminRows.map((r) => r.key)).toEqual(
+        expect.arrayContaining(engineeringRows.map((r) => r.key)),
+      );
+      await expect(flagList(support)).rejects.toThrow('Not authorized');
+    });
+
+    it('records an audit event when a flag is toggled', async () => {
+      const flagId = `flag-toggle-${crypto.randomUUID()}`;
+      await withActor(SYSTEM_ACTOR, async (client) => {
+        await client.query(
+          `INSERT INTO feature_flags (id, key, description, environment, enabled, updated_by)
+           VALUES ($1, $2, 'Audit toggle flag', 'test', false, $3)`,
+          [flagId, `audit-toggle-${crypto.randomUUID()}`, engineering.id],
+        );
+      });
+
+      await withActor(engineering, (client, traceId) =>
+        toggleFlag(client, engineering, flagId, true, traceId),
+      );
+
+      const row = await withActor(engineering, (client) =>
+        client.query(
+          'SELECT enabled, updated_by FROM feature_flags WHERE id = $1',
+          [flagId],
+        ),
+      );
+      expect(row.rows[0]).toEqual({
+        enabled: true,
+        updated_by: engineering.id,
+      });
+
+      const appEvents = await withActor(SYSTEM_ACTOR, (client) =>
+        client.query(
+          `SELECT metadata FROM application_audit_events
+           WHERE event_type = 'flag.toggled' AND actor_id = $1
+           ORDER BY id DESC LIMIT 1`,
+          [engineering.id],
+        ),
+      );
+      expect(appEvents.rows[0].metadata).toMatchObject({
+        flagId,
+        oldEnabled: false,
+        newEnabled: true,
+      });
+
+      const auditRows = await withActor(SYSTEM_ACTOR, (client) =>
+        client.query(
+          `SELECT operation, before_data, after_data FROM audit_log
+           WHERE table_name = 'feature_flags' AND row_pk = $1
+           ORDER BY id DESC`,
+          [flagId],
+        ),
+      );
+      const update = auditRows.rows.find((r) => r.operation === 'UPDATE');
+      expect(update).toBeDefined();
+      expect(Boolean(update.before_data.enabled)).toBe(false);
+      expect(Boolean(update.after_data.enabled)).toBe(true);
+
+      await withActor(SYSTEM_ACTOR, (client) =>
+        client.query('DELETE FROM feature_flags WHERE id = $1', [flagId]),
+      );
+    });
+
+    it('creates a flag through the core boundary and audits it', async () => {
+      const key = `create-test-${crypto.randomUUID()}`;
+      const flagId = await withActor(engineering, (client, traceId) =>
+        createFlag(
+          client,
+          engineering,
+          {
+            key,
+            description: 'Create boundary test',
+            environment: 'test',
+            initialEnabled: true,
+          },
+          traceId,
+        ),
+      );
+
+      const row = await withActor(engineering, (client) =>
+        client.query('SELECT key, enabled FROM feature_flags WHERE id = $1', [
+          flagId,
+        ]),
+      );
+      expect(row.rows[0]).toEqual({ key, enabled: true });
+
+      const appEvents = await withActor(SYSTEM_ACTOR, (client) =>
+        client.query(
+          `SELECT metadata FROM application_audit_events
+           WHERE event_type = 'flag.created' AND actor_id = $1
+           ORDER BY id DESC LIMIT 1`,
+          [engineering.id],
+        ),
+      );
+      expect(appEvents.rows[0].metadata).toMatchObject({ flagId, key });
+
+      await withActor(SYSTEM_ACTOR, (client) =>
+        client.query('DELETE FROM feature_flags WHERE id = $1', [flagId]),
+      );
+    });
+
+    it('denies support actors visibility into feature_flags through RLS', async () => {
+      const rows = await withActor(support, async (client) => ({
+        flags: (await client.query('SELECT id FROM feature_flags')).rows,
+      }));
+      expect(rows.flags).toHaveLength(0);
+    });
+  },
+);

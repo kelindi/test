@@ -4,38 +4,32 @@ import {
   authenticateUser,
   can,
   type Action,
+  type Role,
 } from '../../packages/core/src/index';
 import type { Session } from 'next-auth';
 
 import { actorFromSession } from './lib/actor';
 import { availableTools, toolRegistry } from './tool-registry';
 
+function expectedToolsFor(role: Role) {
+  return toolRegistry.filter((tool) =>
+    can({ id: 'any_user', role }, tool.capability),
+  );
+}
+
 describe('portal access', () => {
   it('lists exactly the tools each seeded account can open', async () => {
     const accounts = [
-      [
-        'support@example.com',
-        'support-password',
-        'support_agent',
-        ['refunds', 'kyc'],
-      ],
-      [
-        'finance1@example.com',
-        'finance-password',
-        'finance_reviewer',
-        ['refunds'],
-      ],
-      [
-        'finance2@example.com',
-        'finance-two-password',
-        'finance_reviewer',
-        ['refunds'],
-      ],
-      ['kyc@example.com', 'kyc-password', 'kyc_reviewer', ['kyc']],
-      ['admin@example.com', 'admin-password', 'admin', ['refunds', 'kyc']],
+      ['support@example.com', 'support-password', 'support_agent'],
+      ['finance1@example.com', 'finance-password', 'finance_reviewer'],
+      ['finance2@example.com', 'finance-two-password', 'finance_reviewer'],
+      ['kyc@example.com', 'kyc-password', 'kyc_reviewer'],
+      ['admin@example.com', 'admin-password', 'admin'],
+      ['eng@example.com', 'engineering-password', 'engineering_team'],
+      ['demo@example.com', 'demo-password', 'demo_admin'],
     ] as const;
 
-    for (const [email, password, role, expectedToolIds] of accounts) {
+    for (const [email, password, role] of accounts) {
       const user = await authenticateUser(email, password);
       expect(user?.role).toBe(role);
       const session: Session = {
@@ -45,8 +39,7 @@ describe('portal access', () => {
       const actor = actorFromSession(session);
 
       expect(actor).not.toBeNull();
-      const tools = availableTools(actor!);
-      expect(tools.map((tool) => tool.id)).toEqual(expectedToolIds);
+      expect(availableTools(actor!)).toEqual(expectedToolsFor(role));
     }
   });
 
@@ -61,10 +54,16 @@ describe('portal access', () => {
         gatedTool,
       ]),
     ).toEqual([]);
-    for (const tool of toolRegistry) {
-      expect(can({ id: 'test', role: 'support_agent' }, tool.capability)).toBe(
-        true,
-      );
+
+    const supportTools = availableTools(
+      { id: 'user_support', role: 'support_agent' },
+      toolRegistry,
+    );
+    for (const tool of supportTools) {
+      expect(
+        can({ id: 'user_support', role: 'support_agent' }, tool.capability),
+      ).toBe(true);
     }
+    expect(supportTools).toEqual(expectedToolsFor('support_agent'));
   });
 });

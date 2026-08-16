@@ -12,7 +12,7 @@ await owner.connect();
 await owner.query(`
   DROP TABLE IF EXISTS access_log, provider_calls, outbox, ledger_entries, ledger,
     kyc_documents, kyc_cases, refund_approvals, refund_requests, payments, customers,
-    users, sensitive_columns, audit_log, application_audit_events CASCADE;
+    users, sensitive_columns, audit_log, application_audit_events, feature_flags CASCADE;
   DROP FUNCTION IF EXISTS create_monthly_audit_partitions(date);
   DROP FUNCTION IF EXISTS install_audit_trigger(text);
   DROP FUNCTION IF EXISTS audit_row() CASCADE;
@@ -51,13 +51,17 @@ await owner.query(
    ('user_finance_1', 'finance1@example.com', 'Finance Reviewer One', $2, 'finance_reviewer'),
    ('user_finance_2', 'finance2@example.com', 'Finance Reviewer Two', $3, 'finance_reviewer'),
    ('user_kyc', 'kyc@example.com', 'KYC Reviewer', $4, 'kyc_reviewer'),
-   ('user_admin', 'admin@example.com', 'Administrator', $5, 'admin')`,
+   ('user_admin', 'admin@example.com', 'Administrator', $5, 'admin'),
+   ('user_engineering', 'eng@example.com', 'Engineering Team', $6, 'engineering_team'),
+   ('user_demo', 'demo@example.com', 'Demo Admin', $7, 'demo_admin')`,
   [
     hashPassword('support-password'),
     hashPassword('finance-password'),
     hashPassword('finance-two-password'),
     hashPassword('kyc-password'),
     hashPassword('admin-password'),
+    hashPassword('engineering-password'),
+    hashPassword('demo-password'),
   ],
 );
 
@@ -101,6 +105,13 @@ await owner.query(
      ('doc_4', 'kyc_1', 'selfie', '/selfie.svg'),
      ('doc_5', 'kyc_2', 'id_front', '/id-front.svg'),
      ('doc_6', 'kyc_2', 'proof_of_address', '/proof-of-address.svg')`,
+);
+
+await owner.query(
+  `INSERT INTO feature_flags (id, key, description, environment, enabled, updated_by)
+   VALUES
+     ('flag_1', 'new_checkout_flow', 'New checkout experience', 'production', false, 'user_admin'),
+     ('flag_2', 'support_ai_assist', 'AI assist in support chat', 'production', true, 'user_admin')`,
 );
 
 await owner.end();

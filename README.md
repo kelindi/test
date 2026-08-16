@@ -103,6 +103,7 @@ Sign in at `/login` with one of these seeded accounts:
 | Finance reviewer | `finance2@example.com` | `finance-two-password` |
 | KYC reviewer     | `kyc@example.com`      | `kyc-password`         |
 | Admin            | `admin@example.com`    | `admin-password`       |
+| Demo (all tools) | `demo@example.com`     | `demo-password`        |
 
 There is deliberately no account provisioning, invite, password-reset, or
 role-management UI. There is also no logout link in the throwaway UI. To
