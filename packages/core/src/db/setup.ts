@@ -49,13 +49,15 @@ await owner.query(
    ('user_finance_1', 'finance1@example.com', 'Finance Reviewer One', $2, 'finance_reviewer'),
    ('user_finance_2', 'finance2@example.com', 'Finance Reviewer Two', $3, 'finance_reviewer'),
    ('user_admin', 'admin@example.com', 'Administrator', $4, 'admin'),
-   ('user_engineering', 'eng@example.com', 'Engineering Team', $5, 'engineering_team')`,
+   ('user_engineering', 'eng@example.com', 'Engineering Team', $5, 'engineering_team'),
+   ('user_demo', 'demo@example.com', 'Demo Admin', $6, 'demo_admin')`,
   [
     hashPassword('support-password'),
     hashPassword('finance-password'),
     hashPassword('finance-two-password'),
     hashPassword('admin-password'),
     hashPassword('engineering-password'),
+    hashPassword('demo-password'),
   ],
 );
 

@@ -12,7 +12,7 @@ CREATE TABLE users (
   email text NOT NULL UNIQUE,
   name text NOT NULL,
   password_hash text NOT NULL,
-  role text NOT NULL CHECK (role IN ('support_agent', 'finance_reviewer', 'admin', 'engineering_team')),
+  role text NOT NULL CHECK (role IN ('support_agent', 'finance_reviewer', 'admin', 'engineering_team', 'demo_admin')),
   is_active boolean NOT NULL DEFAULT true,
   created_at timestamptz NOT NULL DEFAULT now()
 );
@@ -430,25 +430,25 @@ ALTER TABLE application_audit_events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE application_audit_events FORCE ROW LEVEL SECURITY;
 
 CREATE POLICY users_admin ON users
-  USING (current_setting('app.current_actor_role', true) = 'admin');
+  USING (current_setting('app.current_actor_role', true) IN ('admin', 'demo_admin'));
 CREATE POLICY customers_all_roles ON customers
-  USING (current_setting('app.current_actor_role', true) IN ('support_agent', 'finance_reviewer', 'admin'));
+  USING (current_setting('app.current_actor_role', true) IN ('support_agent', 'finance_reviewer', 'admin', 'demo_admin'));
 CREATE POLICY payments_all_roles ON payments
-  USING (current_setting('app.current_actor_role', true) IN ('support_agent', 'finance_reviewer', 'admin'));
+  USING (current_setting('app.current_actor_role', true) IN ('support_agent', 'finance_reviewer', 'admin', 'demo_admin'));
 CREATE POLICY payments_owner_invariants ON payments
   FOR SELECT TO devin_powerapps_owner
   USING (true);
 CREATE POLICY refunds_all_roles ON refund_requests
-  USING (current_setting('app.current_actor_role', true) IN ('support_agent', 'finance_reviewer', 'admin'));
+  USING (current_setting('app.current_actor_role', true) IN ('support_agent', 'finance_reviewer', 'admin', 'demo_admin'));
 CREATE POLICY refunds_owner_invariants ON refund_requests
   FOR SELECT TO devin_powerapps_owner
   USING (true);
 CREATE POLICY approvals_finance ON refund_approvals
-  USING (current_setting('app.current_actor_role', true) IN ('support_agent', 'finance_reviewer', 'admin'));
+  USING (current_setting('app.current_actor_role', true) IN ('support_agent', 'finance_reviewer', 'admin', 'demo_admin'));
 CREATE POLICY ledger_finance ON ledger_entries
-  USING (current_setting('app.current_actor_role', true) IN ('finance_reviewer', 'admin'));
+  USING (current_setting('app.current_actor_role', true) IN ('finance_reviewer', 'admin', 'demo_admin'));
 CREATE POLICY outbox_admin ON outbox
-  USING (current_setting('app.current_actor_role', true) = 'admin');
+  USING (current_setting('app.current_actor_role', true) IN ('admin', 'demo_admin'));
 CREATE POLICY outbox_owner_enqueue ON outbox
   FOR INSERT TO devin_powerapps_owner
   WITH CHECK (true);
@@ -456,14 +456,14 @@ CREATE POLICY outbox_owner_dedupe_read ON outbox
   FOR SELECT TO devin_powerapps_owner
   USING (true);
 CREATE POLICY provider_calls_finance ON provider_calls
-  USING (current_setting('app.current_actor_role', true) IN ('finance_reviewer', 'admin'));
+  USING (current_setting('app.current_actor_role', true) IN ('finance_reviewer', 'admin', 'demo_admin'));
 CREATE POLICY access_log_admin ON access_log
-  USING (current_setting('app.current_actor_role', true) = 'admin');
+  USING (current_setting('app.current_actor_role', true) IN ('admin', 'demo_admin'));
 CREATE POLICY access_log_insert ON access_log
   FOR INSERT
   WITH CHECK (actor_id = current_setting('app.current_actor_id', true));
 CREATE POLICY feature_flags_engineering ON feature_flags
-  USING (current_setting('app.current_actor_role', true) IN ('engineering_team', 'admin'));
+  USING (current_setting('app.current_actor_role', true) IN ('engineering_team', 'admin', 'demo_admin'));
 CREATE POLICY feature_flags_owner_invariants ON feature_flags
   FOR SELECT TO devin_powerapps_owner
   USING (true);
@@ -475,7 +475,7 @@ CREATE POLICY audit_log_owner_read ON audit_log
   USING (true);
 CREATE POLICY audit_log_admin_read ON audit_log
   FOR SELECT
-  USING (current_setting('app.current_actor_role', true) = 'admin');
+  USING (current_setting('app.current_actor_role', true) IN ('admin', 'demo_admin'));
 CREATE POLICY audit_log_finance_own_decision ON audit_log
   FOR SELECT
   USING (
@@ -503,7 +503,7 @@ CREATE POLICY application_audit_events_owner_read ON application_audit_events
   USING (true);
 CREATE POLICY application_audit_events_admin_read ON application_audit_events
   FOR SELECT
-  USING (current_setting('app.current_actor_role', true) = 'admin');
+  USING (current_setting('app.current_actor_role', true) IN ('admin', 'demo_admin'));
 
 GRANT SELECT, INSERT, UPDATE, DELETE ON users, customers, payments, refund_requests,
   refund_approvals, ledger_entries, provider_calls, feature_flags TO devin_powerapps_app;

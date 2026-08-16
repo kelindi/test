@@ -25,6 +25,7 @@ describe('portal access', () => {
       ['finance2@example.com', 'finance-two-password', 'finance_reviewer'],
       ['admin@example.com', 'admin-password', 'admin'],
       ['eng@example.com', 'engineering-password', 'engineering_team'],
+      ['demo@example.com', 'demo-password', 'demo_admin'],
     ] as const;
 
     for (const [email, password, role] of accounts) {

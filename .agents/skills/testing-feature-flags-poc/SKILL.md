@@ -22,6 +22,7 @@ Use this skill when verifying the `Feature Flags` tool in `apps/web/app/(tools)/
 
 | Email | Password | Role | flag:read | flag:toggle | flag:create | audit:read |
 |---|---|---|---|---|---|---|
+| `demo@example.com` | `demo-password` | `demo_admin` | yes | yes | yes | yes |
 | `eng@example.com` | `engineering-password` | `engineering_team` | yes | yes | yes | no |
 | `admin@example.com` | `admin-password` | `admin` | yes | no | yes | yes |
 | `support@example.com` | `support-password` | `support_agent` | no | no | no | no |
