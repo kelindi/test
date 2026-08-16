@@ -1,7 +1,7 @@
 import NextAuth from 'next-auth';
 import Credentials from 'next-auth/providers/credentials';
 
-import { authenticateUser } from '@internal/core';
+import { authenticateUser, type Role } from '@internal/core';
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
   providers: [
@@ -29,7 +29,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
     session({ session, token }) {
       if (session.user) {
         session.user.id = token.sub ?? '';
-        session.user.role = token.role as string;
+        session.user.role = token.role as Role;
       }
       return session;
     },

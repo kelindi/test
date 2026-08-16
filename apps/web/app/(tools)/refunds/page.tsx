@@ -1,7 +1,19 @@
 import Link from 'next/link';
 
-import { auth } from '../../../auth';
 import { reviewerQueue } from '@internal/core';
+import { Badge } from '@/components/ui/badge';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
+import { Button } from '@/components/ui/button';
+import { actorFromSession } from '@/lib/auth';
+import { formatMoney } from '@/lib/format';
+import { auth } from '../../../auth';
 
 export default async function RefundQueuePage() {
   const session = await auth();
@@ -12,60 +24,69 @@ export default async function RefundQueuePage() {
       </main>
     );
 
-  const actor = {
-    id: session.user.id,
-    role: session.user.role as 'support_agent' | 'finance_reviewer' | 'admin',
-  };
+  const actor = actorFromSession(session);
+  if (!actor) return <main>Invalid session</main>;
   const rows = await reviewerQueue(actor);
 
   return (
-    <main>
-      <h1>Refund review queue</h1>
-      <p>
-        Signed in as {session.user.email} ({session.user.role})
-      </p>
-      {session.user.role === 'support_agent' && (
-        <Link href="/refunds/new">Raise refund request</Link>
-      )}
-      <table>
-        <thead>
-          <tr>
-            <th>ID</th>
-            <th>Amount</th>
-            <th>Customer</th>
-            <th>Reason</th>
-            <th>Requester</th>
-            <th>Age</th>
-            <th>Approvals</th>
-            <th>Source</th>
-            <th>State</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row) => (
-            <tr key={row.id}>
-              <td>
-                <Link href={`/refunds/${row.id}`}>{row.id}</Link>
-              </td>
-              <td>
-                ${(Number(row.requestedAmountMinor) / 100).toFixed(2)} / $
-                {(Number(row.originalAmountMinor) / 100).toFixed(2)}
-              </td>
-              <td>
-                {row.customerName} ({row.customerEmail})
-              </td>
-              <td>{row.reasonCode}</td>
-              <td>{row.requesterId}</td>
-              <td>{row.age}</td>
-              <td>
-                {row.approvalCount} / {row.needsTwoApprovals ? 2 : 1}
-              </td>
-              <td>{row.source}</td>
-              <td>{row.state}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+    <main className="mx-auto max-w-[1100px] px-6 py-10">
+      <div className="flex items-center justify-between">
+        <h1 className="text-xl font-semibold leading-7">Refund queue</h1>
+        {actor.role === 'support_agent' && (
+          <Button asChild>
+            <Link href="/refunds/new">Raise refund request</Link>
+          </Button>
+        )}
+      </div>
+      <div className="mt-6 rounded-md border">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Customer</TableHead>
+              <TableHead>Amount</TableHead>
+              <TableHead>Reason</TableHead>
+              <TableHead>Requester</TableHead>
+              <TableHead>Age</TableHead>
+              <TableHead>State</TableHead>
+              <TableHead>Approvals</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {rows.map((row) => (
+              <TableRow key={row.id}>
+                <TableCell>
+                  <Link
+                    href={`/refunds/${row.id}`}
+                    className="underline underline-offset-4"
+                  >
+                    {row.customerName}
+                  </Link>
+                  <div className="text-[13px] text-muted-foreground">
+                    {row.customerEmail}
+                  </div>
+                </TableCell>
+                <TableCell className="font-medium tabular-nums">
+                  {formatMoney(row.requestedAmountMinor, 'USD')} /{' '}
+                  {formatMoney(row.originalAmountMinor, 'USD')}
+                </TableCell>
+                <TableCell>{row.reasonCode}</TableCell>
+                <TableCell className="font-mono text-[13px]">
+                  {row.requesterId}
+                </TableCell>
+                <TableCell className="text-[13px] text-muted-foreground">
+                  {row.age}
+                </TableCell>
+                <TableCell>
+                  <Badge variant="outline">{row.state}</Badge>
+                </TableCell>
+                <TableCell className="tabular-nums">
+                  {row.approvalCount} / {row.needsTwoApprovals ? 2 : 1}
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </div>
     </main>
   );
 }

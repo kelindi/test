@@ -55,7 +55,7 @@ export async function reviewerQueue(actor: Actor): Promise<ReviewerQueueRow[]> {
       `SELECT r.id, r.customer_id, c.name AS customer_name, c.email AS customer_email,
               r.amount_minor AS requested_amount_minor,
               p.amount_minor AS original_amount_minor,
-              r.reason_code, r.state, r.requested_by, now() - r.created_at AS age,
+              r.reason_code, r.state, r.requested_by, (now() - r.created_at)::text AS age,
               COUNT(a.id)::int AS approval_count,
               (r.amount_minor >= $1) AS needs_two_approvals,
               r.source, r.external_reference

@@ -4,7 +4,7 @@ import crypto from 'node:crypto';
 import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 
-import { auth } from '../../../auth';
+import { currentActor } from '@/lib/auth';
 import {
   auditEvent,
   approveRefundRequest,
@@ -30,14 +30,6 @@ const reasonCodes = [
   'service_issue',
   'other',
 ] as const;
-
-type Role = 'support_agent' | 'finance_reviewer' | 'admin';
-
-async function currentActor() {
-  const session = await auth();
-  if (!session?.user) return null;
-  return { id: session.user.id, role: session.user.role as Role };
-}
 
 export async function searchCustomer(email: string) {
   const actor = await currentActor();

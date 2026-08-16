@@ -1,4 +1,8 @@
 import { createRefund, listCustomerPayments, searchCustomer } from '../actions';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { RefundForm } from './refund-form';
 
 export default async function NewRefundPage({
   searchParams,
@@ -11,76 +15,44 @@ export default async function NewRefundPage({
   const payments = customer ? await listCustomerPayments(customer.id) : [];
 
   return (
-    <main>
-      <h1>Raise refund request</h1>
-      <h2>1. Find customer</h2>
-      <form method="get">
-        <label>
-          Customer email
-          <input name="email" type="email" defaultValue={email} required />
-        </label>
-        <button type="submit">Search</button>
-      </form>
-      {customer && (
-        <>
-          <h2>2. Select charge</h2>
-          <p>
-            {customer.name} ({customer.email}) · {customer.externalId}
-          </p>
-          <form action={createRefund}>
-            <input type="hidden" name="customerId" value={customer.id} />
-            <input type="hidden" name="source" value="manual" />
-            <label>
-              Charge
-              <select name="paymentId" required>
-                {payments.map((payment) => {
-                  return (
-                    <option key={payment.id} value={payment.id}>
-                      {payment.externalPaymentId} · {payment.currency}{' '}
-                      {(Number(payment.amountMinor) / 100).toFixed(2)} ·
-                      refunded{' '}
-                      {(Number(payment.refundedMinor) / 100).toFixed(2)} ·
-                      remaining{' '}
-                      {(Number(payment.remainingMinor) / 100).toFixed(2)}
-                    </option>
-                  );
-                })}
-              </select>
-            </label>
-            <label>
-              Refund amount in USD
-              <input
-                name="amount"
-                defaultValue={
-                  payments[0]
-                    ? (Number(payments[0].remainingMinor) / 100).toFixed(2)
-                    : undefined
-                }
-                placeholder="25.00"
-                required
-              />
-            </label>
-            <label>
-              Reason
-              <select name="reasonCode" defaultValue="customer_request">
-                <option value="duplicate">Duplicate</option>
-                <option value="fraud">Fraud</option>
-                <option value="customer_request">Customer request</option>
-                <option value="service_issue">Service issue</option>
-                <option value="other">Other</option>
-              </select>
-            </label>
-            <label>
-              Notes
-              <textarea name="notes" />
-            </label>
-            <input
-              name="idempotencyKey"
-              placeholder="Optional idempotency key"
+    <main className="mx-auto max-w-[1100px] px-6 py-10">
+      <h1 className="text-xl font-semibold leading-7">Raise refund request</h1>
+      <div className="mt-6 max-w-xl">
+        <p className="mb-3 text-[13px] font-medium uppercase tracking-[0.02em] text-muted-foreground">
+          1. Find customer
+        </p>
+        <form method="get" className="flex items-end gap-3">
+          <div className="flex-1 space-y-2">
+            <Label htmlFor="email">Customer email</Label>
+            <Input
+              id="email"
+              name="email"
+              type="email"
+              defaultValue={email}
+              required
             />
-            <button type="submit">Submit for review</button>
-          </form>
-        </>
+          </div>
+          <Button type="submit" variant="outline">
+            Search
+          </Button>
+        </form>
+      </div>
+      {customer && (
+        <div className="mt-6 max-w-[900px]">
+          <p className="text-sm">
+            {customer.name} ({customer.email}) ·{' '}
+            <span className="font-mono text-[13px]">{customer.externalId}</span>
+          </p>
+          <RefundForm
+            customerId={customer.id}
+            payments={payments.map((payment) => ({
+              ...payment,
+              amountMinor: payment.amountMinor.toString(),
+              refundedMinor: payment.refundedMinor.toString(),
+              remainingMinor: payment.remainingMinor.toString(),
+            }))}
+          />
+        </div>
       )}
       {email && !customer && <p>No customer found.</p>}
     </main>

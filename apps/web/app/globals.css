@@ -7,9 +7,18 @@
   --foreground: 222.2 84% 4.9%;
   --card: 0 0% 100%;
   --card-foreground: 222.2 84% 4.9%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 222.2 84% 4.9%;
   --primary: 222.2 47.4% 11.2%;
   --primary-foreground: 210 40% 98%;
+  --secondary: 210 40% 96.1%;
+  --secondary-foreground: 222.2 47.4% 11.2%;
+  --muted: 210 40% 96.1%;
   --muted-foreground: 215.4 16.3% 46.9%;
+  --accent: 210 40% 96.1%;
+  --accent-foreground: 222.2 47.4% 11.2%;
+  --destructive: 0 84.2% 60.2%;
+  --destructive-foreground: 210 40% 98%;
   --border: 214.3 31.8% 91.4%;
   --input: 214.3 31.8% 91.4%;
   --ring: 222.2 84% 4.9%;
@@ -26,49 +35,4 @@
     color: hsl(var(--foreground));
     font-family: Inter, ui-sans-serif, system-ui, sans-serif;
   }
-}
-
-body {
-  margin: 0;
-}
-
-main {
-  margin: 40px auto;
-  max-width: 1100px;
-  padding: 0 24px;
-}
-
-input,
-textarea,
-select {
-  display: block;
-  margin: 8px 0;
-  border: 1px solid #cbd5e1;
-  border-radius: 4px;
-  padding: 8px;
-}
-
-button {
-  margin: 8px 8px 8px 0;
-  border-radius: 4px;
-  background: #0f172a;
-  color: white;
-  padding: 8px 14px;
-}
-
-table {
-  width: 100%;
-  border-collapse: collapse;
-  background: white;
-}
-
-th,
-td {
-  border-bottom: 1px solid #e2e8f0;
-  padding: 10px;
-  text-align: left;
-}
-
-a {
-  color: #1d4ed8;
 }
