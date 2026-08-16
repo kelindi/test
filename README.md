@@ -182,7 +182,8 @@ The auditor-facing claims are executable in
 
 ## Adding a new tool
 
-1. Add the tool's tables and sensitivity classifications to the schema.
+1. Add the tool's tables to the schema and register sensitive columns
+   (with their audit-redaction flags) in `sensitive_columns`.
 2. Enable and force RLS; write policies keyed to actor session variables.
 3. Use `withActor`/`readAs` for database access and `defineAction` for
    mutations.
