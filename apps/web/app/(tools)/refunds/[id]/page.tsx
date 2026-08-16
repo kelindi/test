@@ -14,7 +14,7 @@ import {
   can,
   FakeStripeProvider,
   logAccess,
-  queryAudit,
+  queryRefundAudit,
   readAs,
   refundableBalance,
   SeededPaymentsClient,
@@ -49,10 +49,7 @@ export default async function RefundDetailPage({
   });
   let audit: any[] = [];
   if (can(actor, 'audit:read')) {
-    audit = await queryAudit(actor, {
-      tableName: 'refund_requests',
-      rowPk: id,
-    });
+    audit = await queryRefundAudit(actor, id);
   }
   const payment = await readAs(actor, async (client) => {
     const payments = new SeededPaymentsClient(client, new FakeStripeProvider());
