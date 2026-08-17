@@ -1,6 +1,6 @@
 # Internal tools portal proof of concept
 
-A small monorepo showing how internal tools can be built in the company's own stack with structural governance: audit, authorization, actor-scoped data access, and state transitions enforced at the database layer. The goal is to compare this approach against low-code platforms like Power Apps for tools where engineering depth and auditability matter.
+A small monorepo showing how internal tools can be built in the company's own stack with a mix of database and typed application-layer governance: PostgreSQL RLS enforces coarse role boundaries, triggers make audit records append-only for the application role, and a typed `can()` / state machine layer enforces action, state, and separation-of-duty rules. The goal is to compare this approach against low-code platforms like Power Apps for tools where engineering depth and auditability matter.
 
 ## What it does
 
@@ -9,7 +9,7 @@ A small monorepo showing how internal tools can be built in the company's own st
   - **Refunds** — customer-charge lookup, dual approval for high-value refunds, provider execution, and a hash-chained audit trail.
   - **Feature flags** — create, toggle, and review feature flags with state transitions and audit.
   - **KYC** — stage and review identity/submission documents before approval.
-- Reusable primitives in `packages/core`: actor-scoped Postgres clients, RLS policies, declarative capability matrix, state machine, idempotent outbox, and hash-chained audit log.
+- Reusable primitives in `packages/core`: actor-context Postgres clients, RLS policies for role-level boundaries, a typed capability matrix, state machine, deduplication-keyed outbox, and hash-chained audit log.
 
 ## Run it locally
 
@@ -77,8 +77,8 @@ Tests run against `devin_powerapps_poc_test` and never touch the development dat
 ## Adding a new tool
 
 1. Add tool tables to the schema and register columns requiring audit redaction in `sensitive_columns` with `redact_in_audit = true`.
-2. Force RLS and write policies keyed to `app.current_actor_id` and `app.current_actor_role`.
-3. Use `withActor`/`readAs` for queries and `defineAction` for mutations.
+2. Force RLS for coarse role boundaries and use triggers / foreign keys for structural invariants (audit immutability for the application role, valid state values, composite keys).
+3. Use `withActor`/`readAs` to set Postgres actor context on the connection; use `defineAction` to validate input, check `can()`, wrap the mutation in a transaction, and audit; `can()` enforces action, state, and separation-of-duty rules.
 4. Put permissions in `can()` and transitions in the declarative state machine.
 5. Add one entry to the portal tool registry with the route and gating capability.
 6. Emit business events with `auditEvent` and log PII reads with `logAccess`.
