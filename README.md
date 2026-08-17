@@ -35,8 +35,7 @@ cp .env.example .env
 cp .env apps/web/.env.local
 ```
 
-The `apps/web/.env.local` copy is required when using `pnpm dev` because the
-dev script runs Next.js from `apps/web`.
+Root `.env` is used by `pnpm db:setup`, `pnpm typecheck`, and the test suite. `pnpm dev` and `pnpm build` run from `apps/web`, so the same variables also need to be in `apps/web/.env.local`.
 
 Required variables:
 
@@ -51,14 +50,10 @@ Required variables:
 ```bash
 pnpm install
 pnpm db:setup
-DATABASE_URL="postgres://devin_powerapps_app:app_dev_password@localhost:5432/devin_powerapps_poc_test?sslmode=disable" \
-DATABASE_OWNER_URL="postgres://devin_powerapps_owner:owner_dev_password@localhost:5432/devin_powerapps_poc_test?sslmode=disable" \
-pnpm db:setup
 pnpm dev
 ```
 
-Open http://localhost:3000. To run the production build instead, use
-`pnpm build` followed by `cd apps/web && npx next start -p 3000`.
+Open http://localhost:3000. To run the production build locally instead, use `pnpm build` followed by `cd apps/web && npx next start -p 3000`.
 
 ### Demo accounts
 
@@ -72,7 +67,7 @@ Open http://localhost:3000. To run the production build instead, use
 | Demo (all tools) | `demo@example.com`     | `demo-password`        |
 | Engineering      | `eng@example.com`      | `engineering-password` |
 
-Switch roles by visiting `/api/auth/signout` and logging in again.
+Switch roles by clicking Sign out in the header and logging in again.
 
 ## Verify
 
