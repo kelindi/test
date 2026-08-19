@@ -32,7 +32,11 @@ CREATE DATABASE devin_powerapps_poc_test OWNER devin_powerapps_owner;
 
 ```bash
 cp .env.example .env
+cp .env apps/web/.env.local
 ```
+
+The `apps/web/.env.local` copy is required when using `pnpm dev` because the
+dev script runs Next.js from `apps/web`.
 
 Required variables:
 
@@ -47,11 +51,14 @@ Required variables:
 ```bash
 pnpm install
 pnpm db:setup
-pnpm build
-cd apps/web && cp ../../.env .env && npx next start -p 3000
+DATABASE_URL="postgres://devin_powerapps_app:app_dev_password@localhost:5432/devin_powerapps_poc_test?sslmode=disable" \
+DATABASE_OWNER_URL="postgres://devin_powerapps_owner:owner_dev_password@localhost:5432/devin_powerapps_poc_test?sslmode=disable" \
+pnpm db:setup
+pnpm dev
 ```
 
-Open http://localhost:3000. `pnpm dev` has a known Next.js 15.1.3 webpack-chunk issue in this checkout; use the production start for now.
+Open http://localhost:3000. To run the production build instead, use
+`pnpm build` followed by `cd apps/web && npx next start -p 3000`.
 
 ### Demo accounts
 
@@ -63,6 +70,7 @@ Open http://localhost:3000. `pnpm dev` has a known Next.js 15.1.3 webpack-chunk 
 | KYC reviewer     | `kyc@example.com`      | `kyc-password`         |
 | Admin            | `admin@example.com`    | `admin-password`       |
 | Demo (all tools) | `demo@example.com`     | `demo-password`        |
+| Engineering      | `eng@example.com`      | `engineering-password` |
 
 Switch roles by visiting `/api/auth/signout` and logging in again.
 
@@ -89,7 +97,6 @@ Tests run against `devin_powerapps_poc_test` and never touch the development dat
 
 - This is a proof of concept, not production infrastructure.
 - There is no user provisioning, invite, password reset, or role-management UI.
-- `pnpm dev` has a known Next.js 15.1.3 webpack-chunk issue; use `pnpm build && npx next start` for local testing.
 - Payment provider and KYC document verification are mocked.
 
 ## Operational URLs
